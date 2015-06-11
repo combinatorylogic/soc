@@ -1,0 +1,3 @@
+[submodule "clike"]
+	path = clike
+	url = https://github.com/combinatorylogic/clike.git
