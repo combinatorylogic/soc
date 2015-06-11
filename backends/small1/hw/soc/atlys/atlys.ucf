@@ -1,0 +1,108 @@
+# User Constraints File for the Digilent Atlys board, rev C
+
+# 100MHz Clock: I/O Bank 1
+NET "sys_clk_in" LOC = "L15" | IOSTANDARD=LVCMOS33; # IO_L42P_GCLK7_M1UDM (GCLK)
+NET "sys_clk_in" TNM_NET = "sys_clk_pin";
+TIMESPEC "TS_sys_clk_pin" = PERIOD "sys_clk_pin" 100000 kHz;
+
+# Reset Button: I/O Bank 2 (not used)
+NET "sys_reset" LOC = "T15" | IOSTANDARD=LVCMOS33; # IO_L1N_M0_CMPMISO_2 (M0/RESET)
+
+# Exar UART: I/O Bank 0
+NET "uart_rxd" LOC = "A16" | IOSTANDARD=LVCMOS33; # IO_L66N_SCP0 (USBB-RXD)
+NET "uart_txd" LOC = "B16" | IOSTANDARD=LVCMOS33; # IO_L66P_SCP1 (USBB-TXD)
+
+# Light Emitting Diodes
+NET "LED<0>" LOC = "U18" | IOSTANDARD=LVCMOS25 | SLEW=QUIETIO | DRIVE=2; # Bank = 1, IO_L52N_M1DQ15 (LD0)
+NET "LED<1>" LOC = "M14" | IOSTANDARD=LVCMOS25 | SLEW=QUIETIO | DRIVE=2; # Bank = 1, IO_L53P (LD1)
+NET "LED<2>" LOC = "N14" | IOSTANDARD=LVCMOS25 | SLEW=QUIETIO | DRIVE=2; # Bank = 1, IO_L53N_VREF (LD2)
+NET "LED<3>" LOC = "L14" | IOSTANDARD=LVCMOS25 | SLEW=QUIETIO | DRIVE=2; # Bank = 1, IO_L61P (LD3)
+NET "LED<4>" LOC = "M13" | IOSTANDARD=LVCMOS25 | SLEW=QUIETIO | DRIVE=2; # Bank = 1, IO_L61N (LD4)
+NET "LED<5>" LOC = "D4"  | IOSTANDARD=LVCMOS33 | SLEW=QUIETIO | DRIVE=2; # Bank = 0, IO_L1P_HSWAPEN_0 (HSWAP/LD5)
+NET "LED<6>" LOC = "P16" | IOSTANDARD=LVCMOS25 | SLEW=QUIETIO | DRIVE=2; # Bank = 1, IO_L74N_DOUT_BUSY_1 (LD6)
+NET "LED<7>" LOC = "N12" | IOSTANDARD=LVCMOS33 | SLEW=QUIETIO | DRIVE=2; # Bank = 2, IO_L13P_M1_2 (M1/LD7)
+
+
+
+#
+## DDR2
+############################################################################
+## I/O TERMINATION                                                          
+############################################################################
+#NET "ddr2_dq[*]"                                 IN_TERM = NONE;
+#NET "ddr2_dqs"                                   IN_TERM = NONE;
+#NET "ddr2_dqs_n"                                 IN_TERM = NONE;
+#NET "ddr2_udqs"                                  IN_TERM = NONE;
+#NET "ddr2_udqs_n"                                IN_TERM = NONE;
+
+############################################################################
+# I/O STANDARDS 
+############################################################################
+#NET  "ddr2_dq[*]"                               IOSTANDARD = SSTL18_II;
+#NET  "ddr2_a[*]"                                IOSTANDARD = SSTL18_II;
+#NET  "ddr2_ba[*]"                               IOSTANDARD = SSTL18_II;
+#NET  "ddr2_dqs"                                 IOSTANDARD = DIFF_SSTL18_II;
+#NET  "ddr2_udqs"                                IOSTANDARD = DIFF_SSTL18_II;
+#NET  "ddr2_dqs_n"                               IOSTANDARD = DIFF_SSTL18_II;
+#NET  "ddr2_udqs_n"                              IOSTANDARD = DIFF_SSTL18_II;
+#NET  "ddr2_ck"                                  IOSTANDARD = DIFF_SSTL18_II;
+#NET  "ddr2_ck_n"                                IOSTANDARD = DIFF_SSTL18_II;
+#NET  "ddr2_cke"                                 IOSTANDARD = SSTL18_II;
+#NET  "ddr2_ras_n"                               IOSTANDARD = SSTL18_II;
+#NET  "ddr2_cas_n"                               IOSTANDARD = SSTL18_II;
+#NET  "ddr2_we_n"                                IOSTANDARD = SSTL18_II;
+#NET  "ddr2_odt"                                 IOSTANDARD = SSTL18_II;
+#NET  "ddr2_dm"                                  IOSTANDARD = SSTL18_II;
+#NET  "ddr2_udm"                                 IOSTANDARD = SSTL18_II;
+#NET  "ddr2_rzq"                                      IOSTANDARD = SSTL18_II;
+#NET  "ddr2_zio"                                      IOSTANDARD = SSTL18_II;
+##NET  "c3_sys_clk"                                  IOSTANDARD = LVCMOS25;
+##NET  "c3_sys_rst_n"                                IOSTANDARD = LVCMOS18;
+# NET "ddr2_ck"       LOC = "G3"; # Bank = 3, Pin name = IO_L46P_M3CLK,     		  Sch name = DDR-CK_P
+# NET "ddr2_ck_n"     LOC = "G1"; # Bank = 3, Pin name = IO_L46N_M3CLKN,    		  Sch name = DDR-CK_N
+# NET "ddr2_cke"      LOC = "H7"; # Bank = 3, Pin name = IO_L53P_M3CKE,       		  Sch name = DDR-CKE
+# NET "ddr2_ras_n"    LOC = "L5"; # Bank = 3, Pin name = IO_L43P_GCLK23_M3RASN,		  Sch name = DDR-RAS
+# NET "ddr2_cas_n"    LOC = "K5"; # Bank = 3, Pin name = IO_L43N_GCLK22_IRDY2_M3CASN, Sch name = DDR-CAS
+# NET "ddr2_we_n"     LOC = "E3"; # Bank = 3, Pin name = IO_L50P_M3WE,   			  Sch name = DDR-WE
+# NET "ddr2_rzq"      LOC = "L6"; # Bank = 3, Pin name = IO_L31P,   				  Sch name = RZQ
+# NET "ddr2_zio"      LOC = "C2"; # Bank = 3, Pin name = IO_L83P,   				  Sch name = ZIO
+# NET "ddr2_ba<0>"    LOC = "F2"; # Bank = 3, Pin name = IO_L48P_M3BA0,        		  Sch name = DDR-BA0
+# NET "ddr2_ba<1>"    LOC = "F1"; # Bank = 3, Pin name = IO_L48N_M3BA1,        		  Sch name = DDR-BA1
+# NET "ddr2_ba<2>"    LOC = "E1"; # Bank = 3, Pin name = IO_L50N_M3BA2,       		  Sch name = DDR-BA2
+# NET "ddr2_a<0>"     LOC = "J7"; # Bank = 3, Pin name = IO_L47P_M3A0,        		  Sch name = DDR-A0
+# NET "ddr2_a<1>"     LOC = "J6"; # Bank = 3, Pin name = IO_L47N_M3A1,        		  Sch name = DDR-A1
+# NET "ddr2_a<2>"     LOC = "H5"; # Bank = 3, Pin name = IO_L49N_M3A2,     			  Sch name = DDR-A2
+# NET "ddr2_a<3>"     LOC = "L7"; # Bank = 3, Pin name = IO_L45P_M3A3,     			  Sch name = DDR-A3
+# NET "ddr2_a<4>"     LOC = "F3"; # Bank = 3, Pin name = IO_L51N_M3A4,     			  Sch name = DDR-A4
+# NET "ddr2_a<5>"     LOC = "H4"; # Bank = 3, Pin name = IO_L44P_GCLK21_M3A5,     	  Sch name = DDR-A5
+# NET "ddr2_a<6>"     LOC = "H3"; # Bank = 3, Pin name = IO_L44N_GCLK20_M3A6,    	  Sch name = DDR-A6
+# NET "ddr2_a<7>"     LOC = "H6"; # Bank = 3, Pin name = IO_L49P_M3A7,    			  Sch name = DDR-A7
+# NET "ddr2_a<8>"     LOC = "D2"; # Bank = 3, Pin name = IO_L52P_M3A8,    			  Sch name = DDR-A8
+# NET "ddr2_a<9>"     LOC = "D1"; # Bank = 3, Pin name = IO_L52N_M3A9,   			  Sch name = DDR-A9
+# NET "ddr2_a<10>"    LOC = "F4"; # Bank = 3, Pin name = IO_L51P_M3A10,        		  Sch name = DDR-A10
+# NET "ddr2_a<11>"    LOC = "D3"; # Bank = 3, Pin name = IO_L54N_M3A11,   			  Sch name = DDR-A11
+# NET "ddr2_a<12>"    LOC = "G6"; # Bank = 3, Pin name = IO_L53N_M3A12,       		  Sch name = DDR-A12
+# NET "ddr2_dq<0>"    LOC = "L2"; # Bank = 3, Pin name = IO_L37P_M3DQ0,       		  Sch name = DDR-DQ0
+# NET "ddr2_dq<1>"    LOC = "L1"; # Bank = 3, Pin name = IO_L37N_M3DQ1,       		  Sch name = DDR-DQ1
+# NET "ddr2_dq<2>"    LOC = "K2"; # Bank = 3, Pin name = IO_L38P_M3DQ2,       		  Sch name = DDR-DQ2
+# NET "ddr2_dq<3>"    LOC = "K1"; # Bank = 3, Pin name = IO_L38N_M3DQ3,       		  Sch name = DDR-DQ3
+# NET "ddr2_dq<4>"    LOC = "H2"; # Bank = 3, Pin name = IO_L41P_GCLK27_M3DQ4,        Sch name = DDR-DQ4
+# NET "ddr2_dq<5>"    LOC = "H1"; # Bank = 3, Pin name = IO_L41N_GCLK26_M3DQ5,        Sch name = DDR-DQ5
+# NET "ddr2_dq<6>"    LOC = "J3"; # Bank = 3, Pin name = IO_L40P_M3DQ6,       		  Sch name = DDR-DQ6
+# NET "ddr2_dq<7>"    LOC = "J1"; # Bank = 3, Pin name = IO_L40N_M3DQ7,       		  Sch name = DDR-DQ7
+# NET "ddr2_dq<8>"    LOC = "M3"; # Bank = 3, Pin name = IO_L36P_M3DQ8,    			  Sch name = DDR-DQ8
+# NET "ddr2_dq<9>"    LOC = "M1"; # Bank = 3, Pin name = IO_L36N_M3DQ9,        		  Sch name = DDR-DQ9
+# NET "ddr2_dq<10>"   LOC = "N2"; # Bank = 3, Pin name = IO_L35P_M3DQ10,        	  Sch name = DDR-DQ10
+# NET "ddr2_dq<11>"   LOC = "N1"; # Bank = 3, Pin name = IO_L35N_M3DQ11,        	  Sch name = DDR-DQ11
+# NET "ddr2_dq<12>"   LOC = "T2"; # Bank = 3, Pin name = IO_L33P_M3DQ12,       		  Sch name = DDR-DQ12
+# NET "ddr2_dq<13>"   LOC = "T1"; # Bank = 3, Pin name = IO_L33N_M3DQ13,    		  Sch name = DDR-DQ13
+# NET "ddr2_dq<14>"   LOC = "U2"; # Bank = 3, Pin name = IO_L32P_M3DQ14,        	  Sch name = DDR-DQ14
+# NET "ddr2_dq<15>"   LOC = "U1"; # Bank = 3, Pin name = IO_L32N_M3DQ15,        	  Sch name = DDR-DQ15
+# NET "ddr2_udqs"     LOC="P2"; # Bank = 3, Pin name = IO_L34P_M3UDQS,       		  Sch name = DDR-UDQS_P
+# NET "ddr2_udqs_n"   LOC="P1"; # Bank = 3, Pin name = IO_L34N_M3UDQSN,        		  Sch name = DDR-UDQS_N
+# NET "ddr2_dqs"      LOC="L4"; # Bank = 3, Pin name = IO_L39P_M3LDQS,        		  Sch name = DDR-LDQS_P
+# NET "ddr2_dqs_n"    LOC="L3"; # Bank = 3, Pin name = IO_L39N_M3LDQSN,        		  Sch name = DDR-LDQS_N
+# NET "ddr2_dm"       LOC="K3"; # Bank = 3, Pin name = IO_L42N_GCLK24_M3LDM,          Sch name = DDR-LDM
+# NET "ddr2_udm"      LOC="K4"; # Bank = 3, Pin name = IO_L42P_GCLK25_TRDY2_M3UDM,	  Sch name = DDR-UDM
+# NET "ddr2_odt"      LOC="K6"; # Bank = 3, Pin name = IO_L45N_M3ODT,        		  Sch name = DDR-ODT
+#

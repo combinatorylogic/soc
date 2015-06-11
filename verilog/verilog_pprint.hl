@@ -1,0 +1,123 @@
+
+
+ast verilog0pp: verilog0 () {
+   pprint = description(description:v)
+          | statement(statement:v)
+          | expression(expression:v)
+          | moduleItem(moduleItem:v)
+          ;
+}
+
+
+function verilog_pprint_inner(v)
+  visit:verilog0pp(pprint:v) {
+     deep pprint {
+       description -> v
+     | statement -> v
+     | expression -> v
+     | moduleItem -> v
+     };
+     deep description {
+       module -> ["module ";nm;" (";interleave(ports,",\n");");\n";body;"\nendmodule\n"]
+     | else -> ["/* ";%S<<(node);" */"]
+     };
+     deep port {
+       inout -> ["inout ";@r;" ";interleave(l,",")]
+     | input -> ["input ";@r;" ";interleave(l,",")]
+     | output -> ["output ";@r;" ";interleave(l,",")]
+     | else -> ["/* ";%S<<(node);" */"]
+     };
+     deep moduleItem {
+       net -> [nt; " "; r; " " ; d; interleave(l,","); ";\n"]
+     | reg -> ["reg "; r; " "; interleave(rs,",");";\n"]
+     | always -> ["always ";s]
+     | assign -> ["assign ";as;";\n"]
+     | moduleinst -> 
+           [ nm;" "; @va; is; ";"]
+     | else -> ["/* ";%S<<(node);" */"]
+     };
+     deep assignment {
+       a -> [l; " = "; r]
+     };
+     deep parameterValueAssignment {
+        va -> cs
+     };
+     deep listOfModuleConnections {
+        none -> []
+      | pcs  -> ["(";interleave(pc,",");") "]
+      | npcs  -> ["(";interleave(npc,",");") "]
+     };
+     deep modulePortConnection {
+        none -> ""
+      | e -> e
+     };
+     deep namedPortConnection {
+        n -> [".";nm;"(";e;")"]
+      | nempty -> [".";nm]
+     };
+     deep moduleInstance {
+        mod -> [" ";nm;" ";cs]
+     };
+     deep range {
+       r -> ["[";l;":";r;"]"]
+     };
+     deep expandrange {
+        range -> r
+      | else -> ["/* ";%S<<(node);" */"]
+     };
+     deep registerVariable {
+        reg -> nm
+      | mem -> [nm;"[";l;":";r;"]"]
+     };
+     deep constantExpression {
+        constexpr -> e
+     };
+     deep statement {
+       nonblocking -> [l;" <= ";r;";"]
+     | begin -> ["\nbegin\n";ss;"\nend\n"]
+     | if3 -> ["if (";cnd;") "; tr;
+               " else ";fl]
+     | if2 -> ["if (";cnd;") "; tr]
+     | blocking -> [l;" = ";r;";"]
+     | case -> ["case (";e;")";es;"endcase"]
+     | casex -> ["casex (";e;")";es;"endcase"]
+     | casez -> ["casez (";e;")";es;"endcase"]
+     | else -> ["/* ";%S<<(node);" */"]
+     };
+     deep caseItem {
+        case -> [interleave(es,",");": ";s]
+     |  default -> ["default: ";s]
+     };
+     once lvalue: forall verilog_pprint_inner('expression'(node));
+     deep expression {
+       negedge -> ["negedge "; r]
+     | posedge -> ["posedge "; e]
+     | or -> [" ";l;" or ";r;" "]
+     
+     | nop -> []
+     | number -> n
+     | var -> nm
+     | mintypmax -> [e1; ":"; e2; ":"; e3]
+     | fsyscall ->  [nm; "("; interleave(args,", "); ")"]
+     | fcall -> [nm; "("; interleave(args,", "); ")"]
+     | concatenation -> ["{"; interleave(es,", "); "}"]
+     | multipleconcatenation -> ["{";e;" ";c;"}"]
+     | idx -> [nm; "[";l;"]"]
+     | idx2 -> [nm; "[";l;":";r;"]"]
+     | string -> ["\""; s; "\""]
+     | unop -> [" ";op;" (";p;")"]
+     | binop -> [" (";l;") ";op;" (";r;")"]
+     | ternary -> [" (";c;") ? ("; l;") : (";r;")"]
+     }
+  }
+
+
+function verilog_pprint_string(l)
+  match l with
+     [hd] -> verilog_pprint_string(hd)
+   | [] -> ""
+   | hd : tl -> %S<<(verilog_pprint_string(hd), verilog_pprint_string(tl))
+   | v -> %S<<(v)
+
+
+

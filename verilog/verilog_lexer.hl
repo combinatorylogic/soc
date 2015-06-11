@@ -1,0 +1,165 @@
+% literate:
+
+\pfcode{
+parser verilogcommon () {
+  // A collection of convenience macros
+  pplist<a,b> := {[a]:head [b] [pplist]:tail => $cons(head,tail) }
+              /  {[a]:head [b] => $wrap(head) };
+  cslist<a,b> := {[a]:head [b] [cslist]:tail => $cons(head,tail)}
+               / {[a]:head => $wrap(head)};
+  ecslist<a,b> := {[a]:head [b] cslist<[a],[b]>:tail => $cons(head,tail)}
+                / {[a]:head => $wrap(head)}
+                / {![a] => $nil() };
+  slist<a> := {[a]:head [slist]:tail => $cons(head,tail)}
+            / {[a]:head => $wrap(head)};
+  eslist<a> := {[a]:head [eslist]:tail => $cons(head,tail)}
+             / {![a] => $nil() };
+
+}
+}
+
+\pfcode{
+parser veriloglex (verilogcommon) {
+@initValR := "1'b0" / "1'b1" / "1'bx" / "1'bX" / "1'B0" / "1'B1" / "1'Bx" /
+	   "1'BX" / "1" / "0" ;
+
+@OutputSymbolR := "0" / "1" / "x" / "X";
+@LevelSymbolR := "0" / "1" / "x" / "X" / "?" / "b" / "B";
+@EdgeSymbolR := "r"/"R"/"f"/"F"/"p"/"P"/"n"/"N"/"*";
+
+
+
+@nettypeR := "wire"/"tri"/"tri1"/"supply0"/"wand"/"triand"/"tri0"/"supply1"/
+	"wor"/"trior"/"trireg";
+
+@@strengthRR := "supply"/"strong"/"pull"/"weak"/"highz";
+@strengthR0 := [strengthRR] "0";
+@strengthR1 := [strengthRR] "1";
+
+gatetypeR := and / nand / or / nor / xor / xnor / bufif0 / bufif1 /buf / notif0
+	/ notif1 / not / pulldown / pullup / nmos / rnmos / pmos / rpmos / cmos
+	/ rcmos / tran / rtran / tranif0 / rtranif0 / tranif1 / rtranif1 ;
+
+/*
+<name_of_system_task>
+	::= $<system_identifier> (Note: the $ may not be followed by a space.)
+
+<SYSTEM_IDENTIFIER>
+	An <IDENTIFIER> assigned to an existing system task or function
+*/
+
+@nameOfSystemTaskTk := "$" [identR];
+
+/*
+<edge_descriptor>
+	::= 01
+	||= 10
+	||= 0x
+	||= x1
+	||= 1x
+	||= x0
+*/
+
+@edgeDescriptorTk := "01"/"10"/"0x"/"x1"/"1x"/"x0";
+
+/* <scalar_constant> */ 
+@scalarConstantTk := "1'b0" / "1'b1" / "1'B0" / "1'B1" / "'b0" / "'b1" / "'B0" /
+    "'B1" / "1" / "0" ;
+
+
+@unaryOperatorTk :=
+	"+"/"-"/"!"/"&"/"~&"/"|"/"^|"/"^"/"~^"/"~|"/"~";
+
+@BinaryOperatorTk10 := "*"/"/"/"%";
+@BinaryOperatorTk9 := "+"/"-";
+@BinaryOperatorTk8 := "<<"/">>";
+@BinaryOperatorTk7 := "<="/">="/"<"/">";
+@BinaryOperatorTk6 := "==="/"!=="/"!="/"==";
+@BinaryOperatorTk5 := (!"&&" "&")/"~&";
+@BinaryOperatorTk4 := "^~"/"^"/"~^";
+@BinaryOperatorTk3 := (!"||" "|")/"~|";
+@BinaryOperatorTk2 := "&&";
+@BinaryOperatorTk1 := "||";
+
+
+
+@BinaryOperatorTk := "+"/"-"/"*"/"/"/"%" /"===" /"==" /"!==" /"!=" /"&&" /"||"
+	/">>" /"<<" /"<=" /"<" /">=" /">" /"&" /"|" /"^~" /"^" ;
+
+@@DQUOTE := 34;
+@@BSDQUOTE := "\" 34;
+@stringTk := [DQUOTE] ("\\"/[BSDQUOTE]/( ![DQUOTE] . )) * [DQUOTE];
+
+
+@@numberRR :=  
+              { [unsignedNumber]? "'" [signed]? [base] [unsignedNumber] }
+           /  { [decimalNumber] "." [unsignedNumber] }
+           /  { [decimalNumber] ("." [unsignedNumber])?
+                     ("E"/"e") [decimalNumber] }
+           /  [decimalNumber]
+           ;
+@numberTk := [numberRR];
+
+@@decimalNumber := ("+"/"-")? [0-9] ([0-9]/"_")*;
+@@numChar := [0-9]/[A-F]/[a-f]/"x"/"X"/"z"/"Z"/"?";
+@@unsignedNumber := [numChar] ([numChar]/"_")*;
+@@base := "d"/"h"/"o"/"b"/
+          "D"/"H"/"O"/"B";
+
+@@signed := "s"/"S";
+
+@@comment := [shortComment] / [longComment];
+
+@@NEWLINE := 10;
+@@shortComment := "//" (![NEWLINE] .)* [NEWLINE];
+@@longComment := "/*" (!"*/" .)* "*/";
+
+@identifierTk := [identR] ("." [identR])*;
+
+@@identR := { [identBeginR] [identRestR]* }
+         /  { [BSLASH] (![SPACE] .)+ }
+         ;
+
+@@identBeginR := "_"/[a-z]/[A-Z];
+@@identRestR := [identBeginR]/[0-9]/"$";
+
+@identTk := ![reserved] [identR];
+
+
+@@reservedTk := "xor" / "xnor" / "wor" / "wire" / "while" / "weak1" / "weak0" /
+  "wand" / "wait" / "vectored" / "use" / "unsigned" / "trireg" / "trior" /
+  "triand" / "tri1" / "tri0" / "tri" / "tranif1" / "tranif0" / "tran" / "time" /
+  "task" / "table" / "supply1" / "supply0" / "strong1" / "strong0" / "specparam"
+  / "specify" / "small" / "signed" / "showcancelled" / "scalared" / "rtranif1" /
+  "rtranif0" / "rtran" / "rpmos" / "rnmos" / "repeat" / "remos" / "release" /
+  "reg" / "realtime" / "real" / "pulsestyle_oneventglitch" /
+  "pulsestyle_ondetectglitch" / "pullup" / "pulldown" / "pull1" / "pull0" /
+  "primitive" / "posedge" / "pmos" / "parameter" / "output" / "or" / "notif1" /
+  "notif0" / "not" / "noshowcancelledno" / "nor" / "nmos" / "negedge" / "nand" /
+  "module" / "medium" / "macromodule" / "localparam" / "library" / "liblist" /
+  "large" / "join" / "integer" / "instance" / "input" / "inout" / "initial" /
+  "include" / "incdir" / "ifnone" / "if" / "highz1" / "highz0" / "genvar" /
+  "generate" / "function" / "fork" / "forever" / "force" / "for" / "event" /
+  "endtask" / "endtable" / "endspecify" / "endprimitive" / "endmodule" /
+  "endgenerate" / "endfunction" / "endconfig" / "endcase" / "end" / "else" /
+  "edge" / "disable" / "design" / "defparam" / "default" / "deassign" / "config"
+  / "cmos" / "cell" / "casez" / "casex" / "case" / "bufif1" / "bufif0" / "buf" /
+  "begin" / "automatic" / "assign" / "and" / "always" ;
+
+@@reserved := [reservedTk] ![identRestR];
+
+@@SPACE := 32/9;
+@@LF := 13;
+@@BSLASH := 92;
+
+@@whitespace := [SPACE]/[NEWLINE]/[LF]/[comment];
+@@whitespaces := [whitespace]+;
+
+@sysfunidentTk := "$" [identR];
+
+}
+
+}
+
+
+%%%%%%%%%%%%%%%%%%%%%

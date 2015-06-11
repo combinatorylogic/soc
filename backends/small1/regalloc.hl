@@ -1,0 +1,91 @@
+% literate:
+
+\section{Register allocation}
+
+\pfcode{
+function small1_ir2tree_allocas(code) {
+  als = small1_get_allocas(code);
+  ht = mkhash();
+  iter (dst:t) in als do ohashput(ht, dst, t);
+  return ht}}
+
+\pfcode{
+%"ir2tree -> reg3a"
+function small1_ir2tree_regalloc(code) {
+  allocas = small1_ir2tree_allocas(code);
+  getgen(v) = collector(add, get) {
+    visit:ir2tree(irval: v) {
+      deep irval {
+         'var' -> {tmp = ohashget(allocas,nm);
+                   if (tmp) add('V'(nm, %Sm<<(tmp)))}
+       | else -> []}};
+    return get()};
+  getgenkill(v) =
+    collector(addk, getk) {
+    gen = visit:ir2tree(irval: v) {
+      once irval {
+         'var' -> {tmp = ohashget(allocas,nm);
+                   if (tmp) addk('V'(nm, %Sm<<(tmp)));
+                   return []}
+       | else -> getgen(node)}};
+    return gen:getk()};
+  tmp = visit:ir2tree(irtoplevel: code) {
+    deep irtoplevel {
+      %function -> map append b in body do b
+    | else -> []
+    };
+    deep irbblock {
+      bblock -> ['label'(name);
+                 @map append c do c;@t]
+    };
+    deep irpair: e; // SSA variables do not matter at this stage
+    once irexpr {
+      store -> {
+         rgen = getgen(e);
+         <lgen:kill> = getgenkill(ptr);
+         ['genkill'(kill, lgen::rgen)]
+      }
+    | else -> ['gen'(@getgen('expr'('_', node)))]
+    };
+    once irterm {
+      ret -> ['gen'(@getgen(value));'goto'('END')]
+    | br -> ['gotoconds'(getgen(cnd), [tr;fl])]
+    | br_label -> ['goto'(nm)]
+    | switch -> ['gotoconds'(getgen(value), [els;@cases])]
+    | indirectbr -> ['gotoconds'(getgen(addr),ds)]
+    | else -> ['goto'('END')]
+    }
+  };
+  return [@tmp;'label'('END');'nop'()]
+}}
+
+\pfcode{
+function small1_regalloc(code) {
+  reg3 = small1_ir2tree_regalloc(code);
+  
+  allocd = %r3:allocateregisters([], %r3:lgraphs(reg3));
+  newnm(nm) = {tmp = hashget(allocd, nm);if (tmp) %Sm<<(tmp) else []};
+  done = mkhash();
+  return allocd:visit:ir2tree(irtoplevel: code) {
+    deep irpair: e(nm);
+    deep irbblock {
+      bblock -> mk:node(c = map append c do c)
+    };
+    deep irexpr {
+      alloca -> fun(nm) {
+        chk = newnm(nm);
+        if (chk) {
+          if(not(ohashget(done, chk))) {
+            ohashput(done, chk, chk);
+            return [[chk; node]]
+          } else []
+        } else [[nm;node]]}
+    | else -> fun(nm) [[nm;node]]};
+    deep irval {
+      var -> {
+         chk = newnm(nm);
+         if (chk) mk:node(nm=chk) else node}
+    | expr -> mk:node(e = cadr(car(e(nmtag))))
+    | else -> node}}}}
+
+%%%%%%%%%

@@ -1,0 +1,93 @@
+% literate:
+
+
+\section{IR legalisation for Small1}
+
+Before we start stack demotion, we have to make sure that no IR expr operates
+on an illegal data type.
+
+Legal types are: 32-bit integers and 32-bit pointers. Structures and arrays
+can still be allocated on a stack.
+
+Illegal operations are replaced with calls here. The only legal binary
+operations are (all on 32-bit integers):
+
+\begin{itemize}
+\item $ADD$
+\item $OR$
+\item $AND$
+\item $XOR$
+\end{itemize}
+
+A legal unary operation is $NEG$.
+
+Illegal operations handled by this pass are:
+\begin{itemize}
+\item $SUB(L,R) = ADD(L,NEG(R))$
+\item $MUL(L,R) = call(IMUL,L,R)$
+\item $DIV(L,R) = call(IDIV,L,R)$
+\end{itemize}
+
+We do not do anything with floating point operations at the moment.
+
+\pfcode{
+define small1_enable_mul = mkref([])
+}
+
+\pfcode{
+%"ir2 -> ir2"
+function small1_legalise_binops(types, mdl)
+{
+  isone(l) = match l with integer(x,@_) -> x==1 | else -> [];
+  ismul(node,alt) = if (^small1_enable_mul) node else alt;
+  oneinstr(lift, e) =
+   visit:ir2(irexpr:e) {
+    deep irexpr {
+       binary -> {
+         case op { // TODO: check types?
+           'Mul' -> ismul(node, 'call'('_IMUL',l,r))
+         | 'SDiv' -> 'call'('_ISDIV',l,r)
+         | 'UDiv' -> 'call'('_IUDIV',l,r)
+         | 'SRem'  -> 'call'('_ISREM',l,r)
+         | 'URem'  -> 'call'('_IUREM',l,r)
+         | 'Shl'   ->
+              if(isone(r)) 'call'('_shlone',l)
+              else 'call'('_SHL',l,r)
+         | 'AShr'   ->
+              if(isone(r)) 'call'('_ashrone',l)
+              else 'call'('_ASHR',l,r)
+         | 'LShr'   ->
+              if(isone(r)) 'call'('_shrone',l)
+              else 'call'('_SHR',l,r)
+         | 'Sub'   -> 'binary'('Add',l,lift('binary'('Add','integer'(1,'i32'), lift('call'('_not',r)))))
+         | else    -> node}}
+     | icmp -> {
+         case vcond {
+           'EQ'    -> node
+         | 'NE'   -> 'call'('_LOGNOT',lift('icmp'('EQ',lhs,rhs)))
+         | 'UGT'  -> ismul(node,'call'('_UGT',lhs,rhs))
+         | 'SGT'  -> ismul(node,'call'('_SGT',lhs,rhs))
+         | 'UGE'  -> ismul(node,'call'('_UGE',lhs,rhs))
+         | 'SGE'  -> ismul(node,'call'('_SGE',lhs,rhs))
+         | 'ULT'  -> ismul(node,'call'('_ULT',lhs,rhs))
+         | 'SLT'  -> ismul(node,'call'('_SLT',lhs,rhs))
+         | 'ULE'  -> ismul(node,'call'('_ULE',lhs,rhs))
+         | 'SLE'  -> ismul(node,'call'('_SLE',lhs,rhs))
+         | else -> node}}
+      | else -> node
+     }};
+  visit:ir2(irmodule:mdl) {
+    deep irbblock {
+       bblock -> mk:node(c = map append c in c do c)
+    };
+    deep irpair: collector(add, get) {
+       lift(v) = symbols(nnm) {
+         add([nnm; v]); return 'var'(nnm);
+       };
+       ne = oneinstr(lift, e);
+       return [@get(); mk:node(e = ne)]
+    };
+  }
+}}
+
+%%%%%%%%

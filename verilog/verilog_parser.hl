@@ -1,0 +1,690 @@
+% literate:
+
+\pfcode{
+function %peg-checkfunction-verilog2001enabled (str) {
+  return %peg-fail()
+}}
+
+\pfcode{
+parser verilog (veriloglex) {
+  !!whitespaces;
+
+  [lexical:] := [lexical] => {ctoken = lexic};
+  [keyword:] := [keyword] ![identRestR] => {ctoken = keyword};
+
+  empty := !..;
+
+  verilog := eslist<[description]>:es [whitespace]* => es;
+
+  description "description"
+              := [module]
+              /  [UDP]
+              ;
+
+  module "module"
+         := { module [moduleident]:nm ("(" cslist<[port],",">:ports ")")? ";"
+                 eslist<[moduleItem]>:body
+              endmodule => module(nm, ports, body) }
+         /  { macromodule [moduleident]:nm ("(" cslist<[port],",">:ports ")")? ";"
+                 eslist<[moduleItem]>:body
+              endmodule => macromodule(nm, ports, body) }
+         ;
+
+  moduleident := [ident];
+
+  port "port"
+       :=
+          [portDecl]
+       /  { "." [nameOfPort]:nm "(" [portExpression]:e ")" =>
+            named(nm, e) }
+       /  [portExpression]
+       ;
+
+  nameOfPort := [ident];
+
+  portExpression :=
+                    { "{" slist<[portReference]>:rs "}" => begin(@rs) }
+                 /  [portReference]
+                 ;
+
+  portReference := { [ident]:id "[" [constantExpression]:e1 ":"
+                                    [constantExpression]:e2 "]"
+                     => pref3(id,e1,e2) }
+                /  { [ident]:id "[" [constantExpression]:e "]"
+                     => pref2(id, e) }
+                /  { [ident]:id => pref1(id) }
+                ;
+
+  portDecl := 
+                [inputDeclaration]
+	     /  [outputDeclaration]
+	     /  [inoutDeclaration]
+             ;
+
+  moduleItem "module item"
+             := [parameterDeclaration]
+             /  { [inputDeclaration]:d ";" => d }
+	     /  { [outputDeclaration]:d ";" => d }
+	     /  { [inoutDeclaration]:d ";" => d }
+	     /  [netDeclaration]
+	     /  [regDeclaration]
+	     /  [timeDeclaration]
+	     /  [integerDeclaration]
+	     /  [realDeclaration]
+	     /  [eventDeclaration]
+	     /  [gateDeclaration]
+	     /  [UDPInstantiation]
+	     /  [moduleInstantiation]
+	     /  [parameterOverride]
+	     /  [continousAssign]
+	     /  [specifyBlock]
+	     /  [initialStatement]
+	     /  [alwaysStatement]
+	     /  [task]
+             /  [vfunction]
+             /  [v2001itemschk]
+             ;
+
+  v2001itemschk := (?:verilog2001enabled) [v2001items];
+
+  v2001items := [generateStatement]
+             /  [genvarStatement]
+             ;
+
+  generateStatement := generate eslist<[generateItem]>:es
+                       endgenerate => generate(@es);
+
+
+  UDP "UDP"
+        := primitive [nameOfUDP]:nm "("
+                     cslist<[nameOfVariable],",">:args ")" ";"
+           slist<[UDPDeclaration]>:ds
+           ([UDPInitialStatement]:init)?
+           [tableDefinition]:td
+           endprimitive =>
+              primitive(nm, args, ds, init, td);
+
+  UDPDeclaration := { [outputDeclaration]:d ";" => d}
+                 /  [regDeclaration]
+                 /  { [inputDeclaration]:d ";" => d}
+                 ;
+
+  UDPInitialStatement := initial [outputTerminalName]:l "=" [initVal]:r => initial(l,r);
+
+  initVal := [initValR]:r => $val(r);
+  
+  tableDefinition :=
+                     { table slist<[sequentialEntry]>:es endtable => seqtable(@es) }
+                  /  { table slist<[combinationalEntry]>:es endtable => combtable(@es) }
+                  ;
+
+   combinationalEntry := [levelInputList]:l ":" [OutputSymbol]:s => ce(l,s);
+   sequentialEntry := [inputList]:l ":" [state]:s ":" [nextState]:ns => se(l,s,ns);
+
+   inputList := [levelInputList] / [edgeInputList];
+   levelInputList := slist<[LevelSymbol]>:ss => levell(ss);
+
+   edgeInputList := eslist<[LevelSymbol]>:lsl [edge]:e eslist<[LevelSymbol]>:lsr => edgel(lsl,e,lsr);
+   edge := { "(" [LevelSymbol]:l [LevelSymbol]:r ")" => e2(l,r) }
+        /  { [EdgeSymbol]:s => e1(s) }
+        ;
+   state := [LevelSymbol];
+   nextState := { [OutputSymbol]:s => s(s) }
+             /  { "-" => hyphen() }
+             ;
+
+   OutputSymbol := [OutputSymbolR]:v => $val(v);
+   LevelSymbol := [LevelSymbolR]:v => $val(v);
+   EdgeSymbol := [EdgeSymbolR]:v => $val(v);
+
+   task :=  task [nameOfTask]:nm ";"
+                 eslist<[tfDeclaration]>:tfs
+                 [statementOrNull]:st
+            endtask => task(nm,tfs,st);
+
+   nameOfTask := [ident];
+
+   vfunction := function ([rangeOrType]:tp)? [nameOfFunction]:nm ";"
+                 slist<[tfDeclaration]>:tfs
+                 [statement]:st
+               endfunction => vfunction(tp,nm, tfs, st);
+
+   rangeOrType := { integer => integer() }
+               /  { real => real() }
+               /  [range]
+               ;
+
+   nameOfFunction := [identifier];
+
+   tfDeclaration :=
+                     [parameterDeclaration]
+                 /   { [inputDeclaration]:d ";" => d}
+                 /   { [outputDeclaration]:d ";" => d}
+                 /   [regDeclaration]
+                 /   [timeDeclaration]
+                 /   [integerDeclaration]
+                 /   [realDeclaration]
+                 ;
+
+   parameterDeclaration := parameter cslist<[parameterAssignment],",">:as ";" => parameter(@as);
+
+   parameterAssignment := [ident]:l "=" [constantExpression]:r => ass(l,r);
+
+   inputDeclaration "input declaration"
+      := input [range]:r? [listOfVariables]:l => input(r,l);
+   outputDeclaration "output declaration"
+      := output ([range]:r)? [listOfVariables]:l => output(r,l);
+   inoutDeclaration "inout declaration"
+      :=inout ([range]:r)? [listOfVariables]:l => inout(r,l);
+
+   netDeclaration "net declaration" :=
+                { trireg ([chargeStrength]:s)? ([expandrange]:er)? ([delay]:d) => trireg(s,er,d) }
+              / { [nettype]:nt ([driveStrength]:ds)? ([expandrange]:er)? ([delay]:d)?
+                         [listOfAssignments]:as ";" => netas(nt,ds,er,d,as) }
+              /  { [nettype]:nt ([expandrange]:r)? ([delay]:d)? [listOfVariables]:l ";" =>
+                          net(nt,r,d,l) }
+              ;
+
+   listOfVariables "list of variables" := cslist<[ident],",">;
+   
+   nettype := [nettypeR]:v => $sval(v);
+
+   expandrange :=
+            { vectored [range]:r => vectored(r) }
+         /  { scalared [range]:r => scalared(r) }
+         /  { [range]:r => range(r) }
+         ;
+
+   regDeclaration := reg ([range]:r)? [listOfRegisterVariables]:rs ";" => reg(r,@rs);
+   timeDeclaration := time [listOfRegisterVariables]:rs ";" => time(@rs);
+   integerDeclaration := integer [listOfRegisterVariables]:rs ";" => integer(@rs);
+   realDeclaration := real [listOfVariables]:rs ";" => real(@rs);
+   eventDeclaration := event cslist<[nameOfEvent],",">:es ";" => event(@es);
+
+
+   continousAssign := { assign ([driveStrength]:ds)? ([delay]:d)? [listOfAssignments]:as ";"
+                            => assign(ds, d, as) }
+                   /  { [nettype]:nt ([driveStrength]:ds)? ([expandrange]:e)? ([delay]:d)? 
+                             [listOfAssignments]:as ";" => assignnt(nt, ds, e, d, as) }
+                   ;
+
+   parameterOverride := defparam [listOfParamAssignments]:pas ";" => defparam(@pas);
+
+   listOfVariables := cslist<[nameOfVariable],",">:ns => ns; 
+
+   nameOfVariable := [ident];
+
+   listOfRegisterVariables := cslist<[registerVariable],",">:ls => ls; 
+
+   registerVariable := { [nameOfMemory]:nm "[" [constantExpression]:l ":" [constantExpression]:r "]"
+                                => mem(nm,l,r) }
+                    /  { [nameOfRegister]:nm => reg(nm) }
+                    ;
+   nameOfRegister "name of register" := [ident];  
+   nameOfMemory "name of memory" := [ident];
+   nameOfEvent "name of event" := [ident];
+
+   chargeStrength := "(" [chargeStrengthSym]:s ")" => s;
+   chargeStrengthSym := { small => `small }
+                     /  { medium => `medium }
+                     /  { large => `large }
+                     ;
+   driveStrength := { "(" [strength0]:l "," [strength1]:r ")" => s01(l,r) }
+                 / {  "(" [strength1]:l "," [strength0]:r ")" => s10(l,r) }
+                 ;
+
+   strength0 := [strengthR0]:v => $sval(v);
+   strength1 := [strengthR1]:v => $sval(v);
+
+   range "range" := "[" [constantExpression]:l ":" [constantExpression]:r "]" => r(l,r);
+
+   listOfAssignments := cslist<[assignment],",">:as => as;
+
+   gateDeclaration := [gatetype]:gt ([driveStrength]:ds)? ([delay]:d)?
+                          cslist<[gateInstance],",">:gs ";" => gate(gt,ds,d,@gs);
+                          
+
+   gatetype := [gatetypeR]:v => $sval(v);
+
+   delay := { "#" [number]:n => delay1n(n) }
+         /  { "#" [ident]:i => delay1i(i) }
+         /  { "#" "(" [mintypmaxExpression]:e1 ")" => delay1(e1) }
+         /  { "#" "(" [mintypmaxExpression]:e1 "," [mintypmaxExpression]:e2 ")" => delay2(e1,e2) }
+         /  { "#" "(" [mintypmaxExpression]:e1 "," [mintypmaxExpression]:e2
+                      "," [mintypmaxExpression]:e3 ")" => delay3(e1,e2,e3) }
+         ;
+
+   gateInstance := ([nameOfGateInstance]:nm)? "(" cslist<[terminal],",">:ts ")" => gate(nm,@ts);
+   nameOfGateInstance := [ident]:nm ([range]:r)? => i(nm, r);
+
+   UDPInstantiation := [nameOfUDP]:nm ([driveStrength]:ds)? ([delay]:d)?
+                           cslist<[UDPInstance],",">:is ";" => udpinst(nm,ds,d,@is);
+
+   nameOfUDP := [ident];
+
+   UDPInstance := ([nameOfUDPInstance]:nm)? "(" cslist<[terminal],",">:ts ")" => is(nm,@ts);
+
+   nameOfUDPInstance := [ident]:nm ([range]:r)? => i(nm, r);
+   terminal := [expression] / { [ident]:nm => id(nm) };
+
+   moduleInstantiation := [nameOfModule]:nm ([parameterValueAssignment]:va)?
+                                cslist<[moduleInstance],",">:is ";" => moduleinst(nm,va,@is);
+   nameOfModule := [ident];
+
+   parameterValueAssignment := "#" "(" cslist<[listOfModuleConnections],",">:es ")" => va(@es);
+
+   moduleInstance := [nameOfInstance]:nm "(" [listOfModuleConnections]:cs ")" => mod(nm,@cs);
+
+   nameOfInstance := [ident]:nm ([range]:r)? => i(nm, r);
+
+   listOfModuleConnections :=
+                              {  cslist<[namedPortConnection],",">:npc => npcs(@npc) }
+                           /  {  cslist<[modulePortConnection],",">:pc => pcs(@pc) }
+                           /  {  [empty] => none() }
+                           ;
+
+   modulePortConnection := { [expression]:e => e(e) }
+                        /  { [empty] => none() }
+                        ;
+
+
+   namedPortConnection := { "." [ident]:nm "(" [expression]:e ")" => n(nm,e) }
+                       /  { "." [ident]:nm "(" ")" => nempty(nm) };
+
+   // ////
+   initialStatement := initial [statement]:s => initial(s);
+
+   alwaysStatement := always [statement]:s => always(s);
+   statementOrNull := [statement] / { ";" => null()} ;
+
+   statement "statement"
+             := { [blockingAssignment]:b ";" => b}
+             /  { [nonBlockingAssignment]:nb ";" => nb}
+             /  { if "(" [expression]:cnd ")" [statementOrNull]:tr
+                  else [statementOrNull]:fl => if3(cnd, tr, fl) }
+             /  { if "(" [expression]:cnd ")" [statementOrNull]:tr
+                    => if2(cnd, tr) }
+             /  { case "(" [expression]:e ")"
+                     slist<[caseItem]>:es
+                  endcase => case(e,@es) }
+             /  { casez "(" [expression]:e ")"
+                     slist<[caseItem]>:es
+                  endcase => casez(e,@es) }
+             /  { casex "(" [expression]:e ")"
+                     slist<[caseItem]>:es
+                  endcase => casex(e,@es) }
+             /  { forever [statement]:s => forever(s) }
+             /  { repeat "(" [expression]:e ")" [statement]:s => repeat(e,s) }
+             /  { while "(" [expression]:e ")" [statement]:s => while(e,s) }
+             /  { for "(" [assignment]:a1 ";" [expression]:e ";"
+                          [assignment]:a2 ")" [statement]:s => for(a1,e,a2,s) }
+             /  { [delayOrEventControl]:evc [statementOrNull]:s => de(evc, s) }
+             /  { wait "(" [expression]:e ")" [statementOrNull]:s => wait(e,s) }
+             /  { "->" [nameOfEvent]:n ";" => eto(n) }
+             /  [seqBlock]
+             /  [parBlock]
+             /  [taskEnable]
+             /  [systemTaskEnable]
+             /  { disable [nameOfTask]:t ";" => tdisable(t) }
+             /  { disable [nameOfBlock]:b ";" => bdisable(b) }
+             /  { assign [assignment]:a ";" => assign(a) }
+             /  { deassign [lvalue]:l ";" => deassign(l) }
+             /  { force [assignment]:a ";" => force(a) }
+             /  { release [lvalue]:l ";" => release(l) }
+             ;
+
+   assignment := [lvalue]:l "=" [expression]:r => a(l,r);
+
+   blockingAssignment := { [lvalue]:l "=" [delayOrEventControl]:evc [expression]:r => blocking_de(evc,l,r) }
+                      /  { [lvalue]:l "=" [expression]:r => blocking(l,r) }
+                      ;
+                      
+   nonBlockingAssignment := { [lvalue]:l "<=" [delayOrEventControl]:evc [expression]:r => nonblocking_de(evc,l,r) }
+                      /  { [lvalue]:l "<=" [expression]:r => nonblocking(l,r) }
+                      ;
+
+   delayOrEventControl := [delayControl]
+                       /  [eventControl]
+                       /  {repeat "(" [expression]:e ")" [eventControl]:c => repeat(e,c) }
+                       ;
+
+   caseItem := { cslist<[expression],",">:es ":" [statementOrNull]:s => case(es,s) }
+            / { default ":" [statementOrNull]:s => default(s) }
+            / { default [statementOrNull]:s => default(s) }
+            ;
+
+   seqBlock "seqBlock"
+            := { begin eslist<[statement]>:ss end => begin(@ss) }
+            /  { begin ":" [nameOfBlock]:nm 
+                 eslist<[blockDeclaration]>:ds eslist<[statement]>:ss end
+                   => beginnm(nm,ds,@ss) }
+            ;
+
+   parBlock := { fork eslist<[statement]>:ss join => fork(@ss) }
+            /  { fork ":" [nameOfBlock]:nm
+                      eslist<[blockDeclaration]>:ds
+                      eslist<[statement]>:ss join => forknm(nm,ds,@ss) }
+            ;
+
+   nameOfBlock := [ident];
+
+   blockDeclaration := 
+          [parameterDeclaration]
+        / [regDeclaration]
+        / [integerDeclaration]
+        / [realDeclaration]
+        / [timeDeclaration]
+        / [eventDeclaration]
+        ;
+
+   taskEnable := { [nameOfTask]:nm "(" cslist<[expression],",">:es ")" ";" => task(nm,@es) }
+              /  { [nameOfTask]:nm ";" => task(nm) }
+              ;
+
+   systemTaskEnable := { [nameOfSystemTask]:nm "(" cslist<[expressionOrEmpty],",">:es ")" ";" => systask(nm,@es) }
+                    /  { [nameOfSystemTask]:nm ";" => systask(nm) }
+                    ;
+
+
+   nameOfSystemTask := [nameOfSystemTaskTk]:v => $sval(v);
+   inputIdentifier := [ident];
+   outputIdentifier := [ident];
+
+
+   specifyBlock := specify eslist<[specifyItem]>:ss endspecify => specify(@ss);
+
+   specifyItem := [specparamDeclaration]
+               /  [pathDeclaration]
+               /  [levelSensitivePathDeclaration]
+	       /  [edgeSensitivePathDeclaration]
+	       /  [systemTimingCheck]
+	       /  [sdpd]
+               ;
+
+   specparamDeclaration := specparam cslist<[paramAssignment],",">:as ";" => specparam(@as);
+
+   paramAssignment := "<" [identifier]:l "=" [constantExpression]:r ">" => a(l,r);
+
+   pathDeclaration := [pathDescription]:l "=" [pathDelayValue]:r ";" => pathdecl(l,r);
+
+   pathDescription := { "(" [specifyInputTerminalDescriptor]:l "=>" [specifyOutputTerminalDescriptor]:r ")"
+                        => pathdesc(l,r) }
+                   /  { "(" cslist<[specifyInputTerminalDescriptor],",">:is "*>"
+                            cslist<[specifyOutputTerminalDescriptor],",">:os ")"
+                        => pathdescs(is,os) }
+                   ;
+
+   specifyInputTerminalDescriptor :=
+                   { [inputIdentifier]:nm "[" [constantExpression]:l ":" [constantExpression]:r "]"
+                     => itd3(nm,l,r) }
+                 / { [inputIdentifier]:nm "[" [constantExpression]:l "]"
+                     => itd2(nm,l) }
+                 / { [inputIdentifier]:nm => itd1(nm) }
+                 ;
+    
+
+   pathDelayValue := { "(" cslist<[pathDelayExpression],",">:des ")" => delays(@des) }
+                  /  { [pathDelayExpression]:e => delay(e) }
+                  ;
+
+   pathDelayExpression := [mintypmaxExpression];
+
+   systemTimingCheck := { "$setup" "("
+                             [timingCheckEvent]:e1 ","
+                             [timingCheckEvent]:e2 ","
+                             [timingCheckLimit]:l1
+                             ("," [notifyRegister]:r)? ")" ";"
+                           => setup(e1,e2,l1,r) }
+                     /  { "$hold" "("
+                             [timingCheckEvent]:e1 ","
+                             [timingCheckEvent]:e2 ","
+                             [timingCheckLimit]:l1
+                             ("," [notifyRegister]:r)? ")" ";"
+                           => hold(e1,e2,l1,r) }
+                     // TODO ...
+                     ;
+
+/*
+<system_timing_check>
+	::= $setup( <timing_check_event>, <timing_check_event>,
+		<timing_check_limit>
+		<,<notify_register>>? ) ;
+	||= $hold( <timing_check_event>, <timing_check_event>,
+		<timing_check_limit>
+		<,<notify_register>>? ) ;
+	||= $period( <controlled_timing_check_event>, <timing_check_limit>
+		<,<notify_register>>? ) ;
+	||= $width( <controlled_timing_check_event>, <timing_check_limit>
+		<,<constant_expression>,<notify_register>>? ) ;
+	||= $skew( <timing_check_event>, <timing_check_event>,
+		<timing_check_limit>
+		<,<notify_register>>? ) ;
+	||= $recovery( <controlled_timing_check_event>,
+		<timing_check_event>,
+		<timing_check_limit> <,<notify_register>>? ) ;
+	||= $setuphold( <timing_check_event>, <timing_check_event>,
+		<timing_check_limit>, <timing_check_limit> <,<notify_register>>? ) ;
+*/
+
+   timingCheckEvent := [timingCheckEventControl]:c? [specifyTerminalDescriptor]:d
+                       ("&&&" [timingCheckCondition]:nd)? => ce(c,d,nd);
+
+   specifyTerminalDescriptor := [specifyInputTerminalDescriptor]
+                             /  [specifyOutputTerminalDescriptor]
+                             ;
+
+   controlledTimingCheckEvent := [timingCheckEventControl]:tc
+                                 [specifyTerminalDescriptor]:td
+                                 ( "&&&" [timingCheckCondition]:nd)?
+                              => ctce(tc,td,nd);
+
+   timingCheckEventControl := { posedge => posedge() }
+                           /  { negedge => negedge() }
+                           /  [edgeControlSpecifier]
+                           ;
+
+   edgeControlSpecifier := edge "[" cslist<[edgeDescriptor],",">:ds "]" => edge(@ds);
+
+   edgeDescriptor := [edgeDescriptorTk]:v => $val(v);
+
+   timingCheckCondition := { "(" [scalarTimingCheckCondition]:c ")" => c } / [scalarTimingCheckCondition];
+
+   scalarTimingCheckCondition := [scalarExpression]
+                              /  {"~" [scalarExpression]:e => unop(`tilda, e) }
+                              /  {[scalarExpression]:l "==" [scalarConstant]:r => binop(`deq,l,r) }
+                              /  {[scalarExpression]:l "===" [scalarConstant]:r => binop(`teq,l,r) }
+                              /  {[scalarExpression]:l "!=" [scalarConstant]:r => binop(`neq,l,r) }
+                              /  {[scalarExpression]:l "!==" [scalarConstant]:r => binop(`ndeq,l,r) }
+                              ;
+
+   scalarExpression := [expression]:e => scalarexpr(e);
+   timingCheckLimit := [expression];
+
+   scalarConstant := [scalarConstantTk]:v => $val(v);
+
+   notifyRegister := [identifier];
+   levelSensitivePathDeclaration := 
+              { if "(" [conditionalPortExpression]:cnd ")"
+                       "(" [specifyInputTerminalDescriptor]:l
+                           [polarityOperator]:p?
+                           "=>"
+                           [specifyOutputTerminalDescriptor]:r
+                       ")" "=" [pathDelayValue]:v ";" => ifpd(cnd,l,p,r,v) }
+           /  { if "(" [conditionalPortExpression]:cnd ")"
+                       "(" cslist<[specifyInputTerminalDescriptor],",">:l
+                           [polarityOperator]:p?
+                           "*>"
+                           cslist<[specifyOutputTerminalDescriptor],",">:r
+                       ")" "=" [pathDelayValue]:v ";"
+                 => ifpdl(cnd,l,p,r,v) }
+           ;
+
+   conditionalPortExpression := 
+               {  [unaryOperator]:op [portReference]:l => unop(op,l) }  
+           /   {  [portReference]:l [BinaryOperator]:op [portReference]:r => binop(op,l,r) }
+           /   [portReference]
+           ;
+
+/*
+<polarity_operator>
+	::= +
+	||= -
+*/
+
+   polarityOperator := { "+" => `plus } / { "-" => `minus };
+
+   edgeSensitivePathDeclaration :=
+            { ("<" if "(" [expression]:cnd ")" ">")?
+                   "(" [edgeIdentifier]:ei?
+                       [specifyInputTerminalDescriptor]:l
+                       "=>"
+                       "(" [specifyOutputTerminalDescriptor]:r
+                           [polarityOperator]:op?
+                           ":" [dataSourceExpression]:ds ")" ")"
+                     "=" [pathDelayValue]:v ";"
+                  => espd(cnd, ei, l, r, op, ds, v) }
+         /  { ("<" if "(" [expression]:cnd ")" ">")?
+                   "(" [edgeIdentifier]:ei?
+                       [specifyInputTerminalDescriptor]:l
+                       "*>"
+                       "(" cslist<[specifyOutputTerminalDescriptor],",">:r
+                           [polarityOperator]:op?
+                           ":" [dataSourceExpression]:ds ")" ")"
+                     "=" [pathDelayValue]:v ";"
+                  => espdl(cnd, ei, l, r, op, ds, v) }
+         ;
+
+   edgeSourceExpression := [expression]:e => edgesource(e); // consider it a type annotation
+
+   edgeIdentifier := { posedge => posedge() }
+                  /  { negedge => negedge() }
+                  ;
+   sdpd := if "(" [sdpdConditionalExpression]:e ")" [pathDescription]:l "=" [pathDelayValue]:r ";"
+           => sdpdif(e,l,r);
+
+   sdpdConditionalExpression :=
+           { [unaryOperator]:op [expression]:e => unop(op,e) }
+         / { [expression]:l [BinaryOperator]:op [expression]:r => binop(op,l,r) }
+         ;
+
+   lvalue := 
+          { [identifier]:nm "[" [constantExpression]:l ":" [constantExpression]:r "]"
+              => idx2(nm,l,r) }
+        / { [identifier]:nm "[" [constantExpression]:l "]" => idx(nm,l) }
+        / { [identifier]:nm => var(nm) }
+        / [concatenation]
+        ;
+
+   constantExpression "constant expression"
+      := [expression]:e => constexpr(e);
+   mintypmaxExpression "mintypemax expression" := 
+          { [expression]:e1 ":" [expression]:e2 ":" [expression]:e3 => mintypmax(e1,e2,e3) }
+        / [expression]
+        ;
+
+   expression "expression" := 
+        { [expressionB]:c "?" [expression]:l ":" [expression]:r => ternary(c,l,r) }
+      / [expressionB]
+      ;
+
+   binary expressionB :=
+       (1000) [expressionB] [BinaryOperator10] [expressionB] => binop(op,L,R)
+      | (900) [expressionB] [BinaryOperator9] [expressionB] => binop(op,L,R)
+      | (800) [expressionB] [BinaryOperator8] [expressionB] => binop(op,L,R)
+      | (700) [expressionB] [BinaryOperator7] [expressionB] => binop(op,L,R)
+      | (600) [expressionB] [BinaryOperator6] [expressionB] => binop(op,L,R)
+      | (500) [expressionB] [BinaryOperator5] [expressionB] => binop(op,L,R)
+      | (400) [expressionB] [BinaryOperator4] [expressionB] => binop(op,L,R)
+      | (300) [expressionB] [BinaryOperator3] [expressionB] => binop(op,L,R)
+      | (200) [expressionB] [BinaryOperator2] [expressionB] => binop(op,L,R)
+      | (100) [expressionB] [BinaryOperator1] [expressionB] => binop(op,L,R)
+      | [expression1]
+      ;
+
+   expression1 :=
+        { [unaryOperator]:op [primary]:p => unop(op,p) }
+      / { [string]:s => string(s) }
+      / [primary]
+      ;
+
+   unaryOperator := [unaryOperatorTk]:v => $sval(v);
+   BinaryOperator10 := [BinaryOperatorTk10]:v => $sval(v);
+   BinaryOperator9 := [BinaryOperatorTk9]:v => $sval(v);
+   BinaryOperator8 := [BinaryOperatorTk8]:v => $sval(v);
+   BinaryOperator7 := [BinaryOperatorTk7]:v => $sval(v);
+   BinaryOperator6 := [BinaryOperatorTk6]:v => $sval(v);
+   BinaryOperator5 := [BinaryOperatorTk5]:v => $sval(v);
+   BinaryOperator4 := [BinaryOperatorTk4]:v => $sval(v);
+   BinaryOperator3 := [BinaryOperatorTk3]:v => $sval(v);
+   BinaryOperator2 := [BinaryOperatorTk2]:v => $sval(v);
+   BinaryOperator1 := [BinaryOperatorTk1]:v => $sval(v);
+   string := [stringTk]:v => $val(v);
+
+   primary := { [identifier]:nm "[" [constantExpression]:l ":" [constantExpression]:r "]" => idx2(nm,l,r) }
+           /  { [identifier]:nm "[" [constantExpression]:l "]" => idx(nm,l) }
+           /  [multipleConcatenation]
+           /  [concatenation]
+           /  [functionCall]
+           /  { "(" [mintypmaxExpression]:e ")" => e }
+           /  { [identifier]:nm => var(nm) }
+           /  { [number]:n => number(n) }
+           ;
+
+   number := [numberTk]:v => $val(v);
+
+   concatenation := "{" cslist<[expression],",">:es "}" => concatenation(@es);
+
+   multipleConcatenation := "{" [expression]:e [concatenation]:c "}" => multipleconcatenation(e, c);
+
+
+   expressionOrEmpty := [expression] / { [empty] => nop() };
+   functionCall := 
+          { [nameOfFunction]:nm "(" cslist<[expressionOrEmpty],",">:args ")" => fcall(nm,@args) }
+        / { [nameOfSystemFunction]:nm "(" cslist<[expressionOrEmpty],",">:args ")" => fsyscall(nm,@args) }
+        / { [nameOfSystemFunction]:nm => fsyscall(nm) }
+        ;
+
+   nameOfSystemFunction := [sysfunidentTk]:v => $sval(v);
+   
+/*
+<name_of_function>
+	::= <identifier>
+
+<name_of_system_function>
+	::= $<SYSTEM_IDENTIFIER>
+	(Note: the $ may not be followed by a space.)
+*/
+
+   delay := { "#" [number]:n => hash(n) }
+         /  { "#" [identifier]:id => nhash(id) }
+         /  { "#" "(" cslist<[mintypmaxExpression],",">:es ")" => ehash(@es) }
+         ;
+
+   delayControl
+         := { "#" [number]:n => hash(n) }
+         /  { "#" [identifier]:id => nhash(id) }
+         /  { "#" "(" [mintypmaxExpression]:e ")" => ehash(e) }
+         ;
+
+   eventControl := 
+            { "@" [identifier]:nm => at(nm) }
+         /  { "@" "(" [eventExpression]:e ")" => ate(e) }
+         ;
+
+   eventExpression :=
+            { [eventExpression]:l or [eventExpression]:r => or(l,r) } // left-recursive (!)
+          / { posedge [scalarEventExpression]:e => posedge(e) }
+          / { negedge [scalarEventExpression]:r => negedge(r) }
+          / [expression]
+          ;
+
+   scalarEventExpression := [expression]:e => scalareventexpr(e);
+
+   ident := [identTk]:v => $sval(v);
+   identifier := [identifierTk]:v => $sval(v);
+
+}
+}
+
+
+%%%%%%%%%%%%%

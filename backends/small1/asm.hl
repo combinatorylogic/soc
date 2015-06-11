@@ -1,0 +1,527 @@
+% literate:
+
+
+\section{Small1 assembler}
+
+This assembler backend takes a list of entries (with symbolic names) and
+first fits them into a memory map, according to their sizes and pinned locations.
+
+There should be at least three pinned entries: IRQ table which goes to $0x20000$,
+bootstrap entry point at $0x20100$ and a continuous memory pinned to the end of 
+the code segment, whatever it is.
+
+\pfcode{
+  define INITPOS = 0x20100;
+  define IRQTAB = 0x20000;
+  define MAXREL  = 16777215-2;
+}
+
+
+\pfcode{
+  function abs(n) {
+    .net(n): {
+      tmp = (Int64)((Int32)n);
+      tmp1 = Math.Abs(tmp);
+      leave (object)((Int32)tmp1);
+    }
+  }
+  function over(n) {
+    v = MAXREL;
+    r = .net(n, v): {
+      tmp = (Int64)((Int32)n);
+      tmp1 = Math.Abs(tmp);
+      tmp2 = (Int64)((Int32)v);
+      ret = 0;
+      if (tmp1>tmp2) ret = 1;
+      else ret = 0;
+      return (object)ret;
+    };
+    if (r==0) [] else true
+  }
+}
+
+Assembler AST is following:
+
+\pfcode{
+ast small1asm {
+  asmtop =
+     funct(lblident:lbl,
+           lblident:entry,
+           number:stackdepth,
+           *asmbblock:code)
+   | data(lblident:lbl,
+          *address:data)
+   | pinned(lblident:lbl, number:address, asmtop:c)
+   | final(asmtop:s) // move to the end of the segment
+   | begin(.*asmtop:cs)
+   ;
+  asmbblock =
+     bb(lblident:lbl,
+        *asminst:code);
+  address = n(number:n)
+          | lbl(lblident:lbl)
+          | addrexpr(op:o, address:l, address:r) // o = ADD, SUB or MUL
+          ;
+  immediate = a(address:a)
+            | n(number:n)
+            ;
+  asminst =
+   // ALU 
+     ALU_ADD()
+   | ALU_AND()
+   | ALU_OR()
+   | ALU_SHL()
+   | ALU_SHR()
+   | ALU_ASHR()
+   | ALU_XOR()
+   | ALU_NOT()
+   | ALU_EQ()
+
+   // These instructions may be disabled,
+   //   depending on target SoC configuration.
+   | ALU_MUL()
+
+   | ALU_LE(immediate:v)
+   | ALU_LEQ(immediate:v)
+   | ALU_GE(immediate:v)
+   | ALU_GEQ(immediate:v)
+
+   // Intermediate instructions, do not directly map to
+   //   any opcodes.
+   | JUMP(lblident:dst)
+   | JUMP_C(lblident:dst)
+
+   // Real branching
+   | BR_JMP(address:dst)
+   | BR_JMPR(address:dst)
+   | BR_JMPC(address:dst)
+   | BR_JMPRC(address:dst)
+   | BR_JMPI(immediate:im)
+   | BR_JMPRI(immediate:im)
+   | BR_IRQACK()
+
+   // Immediate
+   | PUSHSE(immediate:v)
+   | PUSH(immediate:v)
+   | PUSHL(immediate:v)
+   | PUSHH(immediate:v)
+
+   // Registers
+   | PUSHSP()
+   | PUSHFP()
+   | PUSHPC()
+   | SETSP()
+   | SETFP()
+   | SETPC()
+   | SETFPREL()
+   | SETPCSP()
+   | PUSHCARRY()
+   | PUSHCOUNTER(immediate:v)
+
+   | CUSTOMOP(immediate:v)
+
+   // Aux
+   | DUP()
+   | POP()
+
+   | SETCRITICAL()
+   | LIFTCRITICAL()
+
+   // Stack
+   | READFP(address:a)
+   | READFPREL(address:a)
+   | READABS(address:a)
+   | WRITEFP(address:a)
+   | WRITEFPREL(address:a)
+   | WRITEABS(address:a)
+
+   // Memory
+   | LOADMEM()
+   | STOREMEM()
+   ;
+}
+}
+
+\pfcode{
+function small1asm_instr_opclass(inst_tag)
+  symcase inst_tag {
+     ALU_ADD
+   | ALU_AND
+   | ALU_OR
+   | ALU_SHL
+   | ALU_SHR
+   | ALU_ASHR
+   | ALU_XOR
+   | ALU_EQ
+   | ALU_MUL
+   | ALU_LE
+   | ALU_LEQ
+   | ALU_GE
+   | ALU_GEQ
+   | ALU_NOT -> 0 // IC_ALU
+   
+   | BR_JMP
+   | BR_JMPR
+   | BR_JMPC
+   | BR_JMPRC
+   | BR_JMPI
+   | BR_JMPRI
+   | BR_IRQACK -> 1 // IC_BRANCH
+
+   | PUSHSE
+   | PUSH
+   | PUSHL
+   | PUSHH -> 2 // IC_IMMED
+   
+   | PUSHSP
+   | PUSHFP
+   | PUSHPC
+   | PUSHCARRY
+   | PUSHCOUNTER
+   | CUSTOMOP
+   | SETSP
+   | SETFP
+   | SETPC
+   | SETFPREL
+   | SETPCSP
+   | DUP
+   | POP
+   | SETCRITICAL
+   | LIFTCRITICAL -> 7 // IC_STACK
+
+   | READFP
+   | READFPREL
+   | READABS -> 3 // IC_FPREAD
+   | WRITEFP
+   | WRITEFPREL
+   | WRITEABS -> 4 // IC_FPWRITE
+
+   | LOADMEM -> 12293 // IC_MEMREAD
+   | STOREMEM -> 6 // IC_MEMWRITE
+   | else -> ccerror('SMALL1ASM:WRONGINSTR'(inst_tag))}
+
+function small1asm_instr_code(inst_tag)
+  symcase inst_tag {
+   | ALU_ADD -> 0
+   | ALU_AND -> 1
+   | ALU_OR  -> 2
+   | ALU_SHL -> 3
+   | ALU_SHR -> 4
+   | ALU_XOR -> 5
+   | ALU_NOT -> 6
+   | ALU_MUL -> 8
+   | ALU_LE -> 9
+   | ALU_LEQ -> 10
+   | ALU_GE -> 11
+   | ALU_GEQ -> 12
+   | ALU_ASHR -> 13
+   | ALU_EQ  -> 7 // IC_ALU
+   
+   | BR_JMP  -> 0
+   | BR_JMPR -> 1
+   | BR_JMPC -> 2
+   | BR_JMPRC -> 3
+   | BR_JMPI  -> 4
+   | BR_JMPRI -> 5
+   | BR_IRQACK -> 6 // IC_BRANCH
+
+   | PUSHSE -> 0
+   | PUSH   -> 1
+   | PUSHL  -> 2
+   | PUSHH  -> 3 // IC_IMMED
+   
+   | PUSHSP -> 0
+   | PUSHFP -> 1
+   | PUSHPC -> 2
+   | SETSP  -> 3
+   | SETFP  -> 4
+   | SETPC  -> 5
+   | SETFPREL -> 6
+   | SETPCSP -> 11
+   | PUSHCARRY -> 12
+   | PUSHCOUNTER -> 13
+   | CUSTOMOP -> 14
+   | DUP    -> 7
+   | POP    -> 8
+   | SETCRITICAL -> 9
+   | LIFTCRITICAL -> 10 // IC_STACK
+
+   | READFP ->0
+   | READFPREL -> 1
+   | READABS -> 2 // IC_FPREAD
+   | WRITEFP -> 0
+   | WRITEFPREL -> 1
+   | WRITEABS -> 2 // IC_FPWRITE
+
+   | LOADMEM -> 0 // IC_MEMREAD
+   | STOREMEM -> 0 // IC_MEMWRITE
+   | else -> ccerror('SMALL1ASM:WRONGINSTR'(inst_tag))}
+}
+
+\pfcode{
+function small1_inst_encode(inst)
+{
+  signext(n) = {
+     if (n<0) {
+       num = abs(n);
+       return 268435456 - num;
+     } else n;
+  };
+
+  tag = car(inst);
+  immed = if(cdr(inst)) cadr(inst) else 0;
+  cls = small1asm_instr_opclass(car(inst));
+  opc = small1asm_instr_code(car(inst));
+  simmed = signext(immed);
+  encoded = .net(cls, opc, simmed): {
+    e = (System.UInt64)0;
+    e = e + (UInt64)((Int32)cls);
+    e = e + (UInt64)((Int32)opc)*(UInt64)8;
+    e = e + (UInt64)((Int32)simmed) * (UInt64)256;
+    leave (object)((UInt32)e);
+  };
+  return encoded;
+}}
+
+\subsection{Resolving the addresses}
+
+The incoming asm module will have some pinned entries (most notable the global entry point) and some named entries.
+All the named labels must be pinned to addresses first, and then the addresses are resolved, replacing the abstract jump
+instructions with concrete ones.
+
+\pfcode{
+function small1_debugfile(pf, fitted, final, getlabel) {
+  hex(n) =
+    .net(n): {
+       leave ((Int32)n).ToString("x");
+    };
+  uhex(n) =
+    .net(n): {
+       leave ((UInt32)n).ToString("x");
+    };
+  pf(";; ASM MEMORY MAP==================\n");
+  iter [lbl;p;len;v] in fitted do {
+    visit:small1asm(asmtop:ohashget(final, lbl)) {
+      deep asmtop {
+         | data -> { pf(%S<<(hex(p),":  .data ",lbl,"\n")); 
+                     iter d in data do
+                         pf(%S<<(":           ",hex(d),"\n"))
+                   }
+         | funct -> { pf(%S<<(hex(p),":  .entry ",lbl,"\n"));
+                      iter cs in code do
+                        iter c in cs do pf(c) }
+      };
+      once asmbblock {
+         bb -> {
+            pos = getlabel(lbl);
+            [%S<<(hex(pos), ":    .bblock ", lbl,"\n");
+             @map c in code count i do %S<<(hex(pos + i),":        ",c,"    [",uhex(small1_inst_encode(c)),"]\n")]
+         }
+      }
+    }
+  };
+}}
+
+\pfcode{
+function small1_lower_asm(mdl, dbpf)
+{
+  entries = mkhash();
+  iter:small1asm(asmtop:mdl) {
+    deep asmtop {
+      funct -> ohashput(entries, lbl, node)
+    | data -> ohashput(entries, lbl, node)
+    | else -> []}};
+  lengths = mkhash();
+  // 1. Sorted list of pinned areas:
+  //    we'll stick the rest in between, where fits.
+  pins = collector(add, get) {
+    visit:small1asm(asmtop:mdl) {
+       deep asmtop {
+          pinned -> {
+            len = c;
+            add([lbl;address;len]);
+            return len
+          }
+        | funct -> { l = foldl( ( %+ ), 0, code);
+                     ohashput(lengths, lbl, l);
+                     return l}
+        | data -> { l = length(data);
+                    ohashput(lengths, lbl, l);
+                    return l}
+        | begin -> foldl( ( %+ ), 0, cs)
+        | final -> s
+       };
+       deep asmbblock {
+         bb -> length(code)
+       }
+    };
+    return get()};
+  pins = qsort(fun (l, r) {
+                   <[_;pl;_]> = l;
+                   <[_;pr;_]> = r;
+                    return pl < pr;
+                 }, pins);
+  // 2. List of fitted entries (including the previously pinned ones)
+  //    [lbl;pos;len;value]...
+  fitted = collector(fitadd, fitget) {
+   dofit(lbl, len, v, pos) = {
+     fitadd([lbl; pos; len; v])
+   };
+   fitter = mkref([]);
+   fitter := do floop(ps = pins, pos = INITPOS) {
+    match ps with
+      [l;xpos;xlen]:tl -> fun(lbl,len,v) {
+         if ( pos < xpos && pos + len < xpos) {
+           dofit(lbl, len, v, pos);
+           fitter := floop(ps, pos + len)
+         } else if (pos >= xpos || pos + len >= xpos) {
+           dofit(lbl, len, v, xpos + xlen);
+           fitter := floop(tl, xpos + xlen + len);
+         } 
+      }
+    | else -> fun(lbl,len,v) {
+        dofit(lbl, len, v, pos);
+        fitter := floop(nil, pos + len);
+      }
+   };
+   iter [l;pos;len] in pins do {
+     dofit(l,len, ohashget(entries, l), pos);
+   };
+   fit(lbl, len, v) = (deref(fitter))(lbl,len,v);
+   collector(finadd, finget) {
+    visit:small1asm(asmtop:mdl) {
+     once asmtop {
+       pinned -> []
+     | final -> finadd(s) // ignore for now
+     | deep -> {
+         funct -> fit(lbl, ohashget(lengths, lbl), node)
+       | data -> fit(lbl, ohashget(lengths, lbl), node)
+       | else -> []}}};
+    iter f in finget() do { // now fit the final entries (zero or one really)
+     visit:small1asm(asmtop:f) {
+      deep asmtop {
+          funct -> fit(lbl, ohashget(lengths, lbl), node)
+        | data -> fit(lbl, ohashget(lengths, lbl), node)
+        | else -> []
+      }}};
+   };
+   return fitget();
+ };
+ // 3. Mapping all the labels (including basic block labels),
+ //    evaluating address expressions
+ labels = mkhash();
+ addlabel(l, p) = ohashput(labels, l, p);
+ iter [lbl;p;len;v] in fitted do {
+   visit:small1asm(asmtop:v) {
+      deep asmbblock {
+        bb -> fun(pos) {
+                 len = length(code);
+                 addlabel(lbl, pos);
+                 return pos + len;}};
+      deep asmtop {
+        funct -> {
+           addlabel(lbl, p);
+           foldl(fun(pos, c) {
+                   c(pos)
+                 }, p, code);}
+      | data -> {
+           addlabel(lbl, p);
+        }
+      | else -> []
+   }}};
+ getlabel(lbl) = { chk = ohashget(labels, lbl);
+                   if(not(chk)) ccerror('SMALL1ASM:WRONGLABEL'(lbl));
+                   return chk};
+ jump(lbl, pos, cnd) = {
+   dst = getlabel(lbl);
+   if (abs(dst - pos) < MAXREL) {if (cnd) 'BR_JMPRC'(dst-pos) else 'BR_JMPR'(dst-pos)}
+   else {if(cnd) 'BR_JMPC'(dst) else 'BR_JMP'(dst)}
+ };
+ final = mkhash();
+ mapped = visit:small1asm(asmtop:mdl) {
+   deep asminst {
+      JUMP -> fun(pos) jump(dst, pos, [])
+    | JUMP_C -> fun(pos) jump(dst, pos, 'C')
+    | else -> fun(pos) node
+   };
+   deep asmbblock {
+      bb -> {
+        bbpos = getlabel(lbl);
+         hex(n) =
+          .net(n): {
+            leave ((Int32)n).ToString("x");
+          };
+        mk:node(code = map c in code count i do c(bbpos + i))
+      }
+   };
+   deep address {
+      lbl -> getlabel(lbl)
+    | n -> n
+    | addrexpr ->
+         case o {
+            'ADD' -> l+r
+          | 'SUB' -> l-r
+          | 'MUL' -> l*r
+          | else -> ccerror('SMALL1ASM:WRONGADDREXPR'(node))
+         }
+   };
+   deep immediate { // TODO: check the range
+      a -> a
+    | n -> n
+   };
+   deep asmtop {
+      funct -> {ohashput(final, lbl, node); node}
+    | data -> {ohashput(final, lbl, node); node}
+    | else -> node
+   }
+ };
+ // 4. Emit the code
+ //    Returns a list of [pos; datawords]
+ mkuint32(n) = .net(n): {
+    tmp = (UInt64)((Int32)n);
+    leave (object)((UInt32)tmp);
+ };
+ if (dbpf) small1_debugfile(dbpf,fitted, final, getlabel);
+ memmap = map [lbl;p;len;v] in fitted do {
+   [p; visit:small1asm(asmtop:ohashget(final, lbl)) {
+          deep asmtop {
+             data -> map d in data do mkuint32(d)
+           | funct -> map append c in code do c
+          };
+          once asmbblock {
+             bb -> map c in code do small1_inst_encode(c)
+          }
+    }]
+ };
+ memmap = qsort(fun(l,r) car(l)<car(r), memmap);
+ return memmap
+}}
+
+\pxxxfcode{
+#(define debug-compiler-ast nil)
+#(force-class-flush)
+}
+
+\pfcode{
+function small1_hexfile(pf, memmap, base) {
+  hex(n) =
+    .net(n): {
+       leave ((UInt32)n).ToString("x");
+    };
+  do loop(mm = memmap, pos = base) {
+    match mm with
+      [loc;data]:tl -> {
+         if (loc > pos) {
+            iter z in [0..(loc-pos)] do pf("0");
+            loop(mm, loc)
+         } else {
+           l = length(data);
+           iter z in data do pf(hex(z));
+           loop(tl, pos + l);
+         }
+      }
+  }
+}}
+
+
+%%%%%%%

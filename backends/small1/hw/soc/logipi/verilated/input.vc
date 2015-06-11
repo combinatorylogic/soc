@@ -1,0 +1,4 @@
++librescan +libext+.v
+  -y ../../logipi
+  +incdir+../../../rtl
+  +incdir+../../../custom

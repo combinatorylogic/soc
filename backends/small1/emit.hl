@@ -1,0 +1,811 @@
+% literate:
+
+\section{Small1 custom backend}
+
+\pfcode{
+include "./asm.hl"
+include "./legalise.hl"
+}
+
+\subsection{Generic stack--machine lowering}
+
+This must be moved out of small1--specific code as it suits any other
+stack machine. We expect that legalisation is already done here, on source IR
+level.
+
+\verb|ir2| AST allows to recover an expression tree out of an SSA IR.
+
+\pfcode{
+ast ir2tree : ir2 () {
+  irval += expr(ident:nmtag, irexpr:e);
+}
+}
+
+
+\verb|ir3tree| is a further lowered AST.
+
+\pfcode{
+ast ir3tree {
+   irmodule is (.*irtop:ts);
+   irtop =
+      funct(lblident:lbl,
+            lblident:entry,
+            any:stackdepth,
+            *irbblock:code)
+    | global(lblident:lbl, any:length, any:words)
+    | comment(.*any:cs)
+    ;
+   irbblock =
+      bb(lblident:lbl,
+         *irexpr:es,
+         irexpr:term);
+   irexpr =
+      // External memory address space
+      loadmem(irexpr:ptr)
+    | storemem(irexpr:ptr, irexpr:v)
+    | globptr(ident:ptr)
+
+      // Stack address space, various addressing modes:
+      //    FP-relative
+    | loadvar(const:ptr) 
+    | storevar(const:ptr, irexpr:v)
+      // Load an absolute value of an FP-relative pointer
+    | loadptr(const:ptr) 
+      //    FP-relative with index
+    | loadrelvar(const:ptr, irexpr:idx) 
+    | storerelvar(const:ptr, irexpr:idx, irexpr:v)
+      //    temporary nodes
+    | stackptradd(irexpr:ptr, irexpr:idx)
+    | addrmul(irexpr:idx, number:n)
+      //    0-based
+    | loadstk(irexpr:ptr)
+    | storestk(irexpr:ptr)
+
+      // ALU
+    | binary(ident:op, irexpr:l, irexpr:r)
+    | unary(ident:op, irexpr:v)
+      // Still a high level call
+    | call(ident:fp, .*irexpr:args)
+    | callptr(irexpr:fp, .*irexpr:args)
+      // Sequence of instructions, must handle their stack
+    | seq(.*irexpr:es)
+      // Drop the result on the stack
+    | drop(irexpr:e)
+      // Branching (high level, mode will be chosen by assembler)
+    | br(lblident:lbl)
+    | br_c(irexpr:cnd, lblident:ltr, lblident:lfl)
+      // High level return ABI handling
+    | ret(irexpr:e)
+    | retv()
+
+      // High level assembler: constants may be either immediates
+      //   or lifted into the external memory
+    | const(any:v) // may be an immediate or a global
+    | addr(lblident:v) // load a static address
+      // TEMP
+    | other(any:v)
+    ;
+}
+}
+
+This is a simple backend, assuming that IR had been legalised already.
+Legalisation means that only 32-bit integer and pointer operations are left,
+illegal operations are replaced with calls (e.g., multiplication, division,
+shifts, etc.).
+
+Compilation pipeline is following:
+
+legalised IR
+  $\to$ enumerated side-effects
+    $\to$ tree-demoted IR (keeping side effects in order)
+       $\to$ address-space marking
+        $\to$ tree-lowered IR
+          $\to$ Small1 asm.
+
+\pfcode{
+function small1_isintrinsic(fn)
+  case fn {
+    '_intptr' | '_ptrint' | '_not' | '_ashrone' | '_shrone' | '_shlone' -> true
+  | '_nop' -> true
+  | else -> []
+  }
+}
+
+\pfcode{
+%"ir2 -> ir2tree"
+function small1_tree_lowering_bb(src, globuses)
+{
+  vls0 = mkhash(); uses = mkhash();
+  nosideeffects(e) = {
+    visit:ir2(irexpr:e) { once irexpr {
+      string -> true
+    | binary -> true
+    | getelementptr -> true
+    | convop -> true
+    | select -> true
+      // TODO: some intrinsic calls may be safe too.
+    | call -> small1_isintrinsic(fn)
+    | else -> []
+    }}};
+  adddef(nm, e) = if (nosideeffects(e)) ohashput(vls0, nm, e);
+  adduse(nm) = {
+    cnt0 = ohashget(uses, nm);
+    cnt = if(cnt0) cnt0 else 0;
+    ohashput(uses, nm, cnt+1);
+  };
+  iter:ir2(irbblock:src) {
+    deep irval {
+      var -> adduse(nm)
+    | else -> []
+    };
+    deep irpair: adddef(nm, e);
+  };
+  vls = mkhash();
+  hashiter(fun(k,v) {
+      chk = ohashget(uses, k);
+      gchk = ohashget(globuses, k);
+      if(not(chk) || chk < 2)
+        if(not(gchk) || (chk && (gchk < 2))) ohashput(vls, k, v);
+    }, vls0);
+  fixval(v,fe) = 
+    visit:ir2(irval:v) {
+      deep irval {
+         var -> {
+           chk = ohashget(vls, nm);
+           if (chk) // This variable is defined in the current basic block
+            {       // and it's not a side-effect
+                    // and it's got only one use
+               'expr'(nm, fe(chk)) // reuse the old name as a tag now
+            } else node
+         }
+       | else -> node
+      };
+    };
+  fixexpr(e) =
+    visit:ir2(irexpr:e) {
+      once irval: forall fixval(node, fixexpr);
+    };
+  fixterm(t) =
+    visit:ir2(irterm:t) {
+      once irval: forall fixval(node, fixexpr);
+    };
+  visit:ir2(irbblock:src) {
+    deep irpair: {
+       if (ohashget(vls, nm)) [] else [node]
+    };
+    once irexpr: forall fixexpr(node);
+    once irterm: forall fixterm(node);
+    deep irbblock {
+       bblock -> mk:node(c = map append x in c do x)
+    };
+    }
+}}
+
+\pfcode{
+function small1_tree_lowering_code(src) {
+  uses = mkhash();
+  adduse(nm) = {
+    cnt0 = ohashget(uses, nm);
+    cnt = if(cnt0) cnt0 else 0;
+    ohashput(uses, nm, cnt+1);
+  };
+  iter:ir2(ircode:src) {
+    deep irval {
+      var -> adduse(nm)
+    | else -> []}
+  };
+  return visit:ir2(ircode:src) {
+    once irbblock: forall small1_tree_lowering_bb(node, uses);
+  }
+}}
+
+\pfcode{
+%"ir2 -> ir2tree"
+function small1_tree_lowering(src) {
+  visit:ir2(irmodule:src) {
+    once ircode: small1_tree_lowering_code(node);
+  }}}
+
+Next step is to demote all the remaining SSA bindings to the stack allocations,
+and then distinguish stack pointers from the mem pointers (N.B. - must be done
+full-program, statically).
+
+\pfcode{
+%"ir2tree -> ir2tree"
+function small1_tree_demote(src) {
+  // every binding becomes a stack slot write,
+  // every var becomes a stack slot read (including the arguments, they're
+  //  already on a stack anyway).
+  onefun(srcfun) = {
+    collector(addalloca, getallocas) {
+     uses = mkhash();
+     iter:ir2tree(irtoplevel:srcfun) {
+       deep irval {
+         var -> ohashput(uses, nm, nm)
+       | else -> node
+       }
+     };
+     isalloca = mkhash();
+     visit:ir2tree(irtoplevel:srcfun) {
+       once irexpr {
+          alloca -> fun(nm) {
+            ohashput(isalloca, nm, nm)
+          }
+        | else -> fun(x) nil
+       };
+       deep irpair: e(nm);
+     };
+     r = visit:ir2tree(irtoplevel:srcfun) {
+      deep irval {
+        var -> if(ohashget(isalloca, nm) || not(ohashget(uses, nm)))
+                 node
+               else
+                 'expr'(gensym(), 'load'('var'(nm)))
+      | else -> node
+      };
+      deep irpair: {
+        if (ohashget(isalloca, nm) || not(ohashget(uses, nm)))
+             node
+          else {
+             addalloca(nm);
+             mk:node(nm = '_', e = 'store'('var'(nm), 'expr'(nm, e)))
+          }
+      }};
+     allocas = getallocas();
+     visit:ir2tree(irtoplevel:r) {
+       deep irbblock {
+         bblock -> if (name == 'entry') { // there is only one entry!
+           mk:node(c = [@map a in allocas do
+                          [a; 'alloca'('integer'('i32'))];   // TODO: proper types
+                          @c])
+         } else node}}}};
+  return visit:ir2tree(irmodule:src) {
+     deep irtoplevel {
+        %function -> onefun(node)
+      | else -> node
+     }
+  }
+}}
+
+\subsection{Small1 CPU--specific lowering}
+
+\pfcode{
+%"ir2tree -> [nm:tp ...]"
+function small1_get_allocas(fn) collector(add, get) {
+   visit:ir2tree(irtoplevel: fn) {
+      deep irexpr {
+         alloca -> fun(dst) add(dst : t)
+       | else -> fun(x) []
+      };
+      deep irpair: e(nm); // assuming allocas are not inlined
+   };
+   return get();}}
+
+\pfcode{
+%"ir2tree -> number"
+function small1_type_size(tp) {
+  visit:ir2tree(irtype:tp) {
+   deep irtype {
+     integer -> 1 // should be legalised already
+   | array -> t * foldl( ( %* ), 1, dims)
+   | pointer -> 1
+   | struct -> foldl( ( %+ ), 0, elts)
+   | structref -> 0
+   | %function -> 0
+   | varfunction -> 0
+   | alias -> 0
+   | void -> 0
+
+   | else -> ccerror('CCSMALL1:ILLEGALTYPE'(node, tp))
+   }}}}
+
+\pfcode{
+function small1_binary_op(op) {
+  case op {
+    'Add' -> 'ADD'
+  | 'Shl' -> 'SHL'
+  | 'Shr' -> 'SHR'
+  | 'And' -> 'AND'
+  | 'Or' -> 'OR'
+  | 'Xor' -> 'XOR'
+  | 'Mul' -> 'MUL'
+  | else -> ccerror('CCSMALL1:ILLEGALBINOP'(op))
+  }
+}
+}
+
+\pfcode{
+function small1_removeallocas(body) {
+  visit:ir2tree(ircode: body) {
+     deep irbblock {
+        bblock -> mk:node(c = map append c do c)
+     };
+     deep irpair: { if(e) [node] else [] };
+     deep irexpr {
+        alloca -> []
+      | else -> node
+     }}}}
+
+\pfcode{
+include "./regalloc.hl"
+}
+
+\pfcode{
+%"ir2tree -> ir3tree"
+function small1_tree_lowering_fun_3(fn, fnnm, rettp, args, body, liftglobal)
+{
+   // 1. Build a stack map from allocas
+   varstkmap = mkhash();
+   argstkmap = mkhash();
+   allocas = small1_get_allocas(fn);
+   varstacksize =
+        foldl(fun(idx, a) {
+                <nm:tp> = a;
+                 ohashput(varstkmap, nm, idx);         // remember position
+                 return idx + small1_type_size(tp); // next position
+              }, 0, allocas);
+   // 2. Build a stack map for the args
+   argstacksize =
+        foldl(fun(idx, a) {
+                <[tp;nm]> = a;
+                 ohashput(argstkmap, nm, idx);
+                 return idx + small1_type_size(tp);
+              }, 0, args);
+   // 3. Translate the code
+   checkval(v) = fun(a,b) {
+     if (a || b) ccerror('CCSMALL1:ILLEGALUSE'(v));
+     return v
+   };
+   // TODO: 
+   numeric_const(n) = {
+    visit:ir3tree(irexpr: n) {
+       once irexpr {
+         const -> v
+       | else -> ccerror('CCSMALL1:NOTNUMERIC'(n))
+       }
+    }
+   };
+   struct_shifts(elts) = {
+     do loop(es=elts, pos = 0) {
+        match es with
+          hd : tl -> {
+             npos = small1_type_size(hd) + pos;
+             pos : loop(tl, npos)
+          }
+        | [] -> []
+     }
+   };
+   dogep(ptr, sval, dst) = {
+     match sval with
+       gep(idxs, tp) -> {
+         do loop(t = tp, is = idxs, topval = ptr) if (is) {
+            i = car(is);
+            simple(t) = {
+                    width = small1_type_size(t);
+                    shiftcode = if(dst === 'stack') {
+                       'stackptradd'(topval, 'addrmul'(i, width))
+                    } else {
+                       'binary'('ADD', topval, 'addrmul'(i, width))
+                    };
+                    loop(t, cdr(is), shiftcode)
+            };
+            t0 = t;
+            visit:ir2tree(irtype:t0) {
+              once irtype {
+                 struct -> {
+                    cnst = numeric_const(i);
+                    shift = nth(cnst, struct_shifts(elts));
+                    itp = nth(cnst, elts);
+                    shiftcode = if(dst === 'stack') {
+                       'stackptradd'(topval, 'const'(shift))
+                    } else {
+                       'binary'('ADD', topval, 'const'(shift))
+                    };
+                    loop(itp, cdr(is), shiftcode)
+                 }
+               | pointer -> simple(t)
+               | array -> simple(t)
+               | else -> simple(t0)
+              }}} else return topval
+          }};
+   bblks = visit:ir2tree(ircode: small1_removeallocas(body)) {
+     deep irpair: e;
+     deep irexpr {
+       load -> ptr('load',[])
+     | store -> ptr('store', e([],[]))
+     | binary -> 'binary'(small1_binary_op(op), l([],[]), r([],[]))
+     | call -> 'call'(fn,@map a in args do a([],[]))
+     | callptr -> 'callptr'(fn([],[]),@map a in args do a([],[]))
+     | getelementptr -> {
+         if (not(ptrtp)) {
+           ccerror('SMALL1:UNTYPEDGEP'(node));
+         };
+         tp = car(ptrtp);
+         ptr('gep', 'gep'(map i in idxs do i([],[]), tp))
+       }
+     | convop -> v([],[]) // 'other'('convop'(op, v([],[]), t)) // TEMP!
+     | icmp -> 'binary'(vcond, lhs([],[]), rhs([],[])) // EQ only
+     | string -> symbols (gnm) {
+          data = (map c in %string->list(s) do ascii(c))::[0];
+          liftglobal('global'(gnm, length(data), data));
+          return 'globptr'(gnm)
+       }
+     | else -> 'other'(node) // ccerror('CCSMALL1:ILLEGALINSTR'(node))
+     };
+     deep irbblock {
+       bblock -> 'bb'(%Sm<<(fnnm,"::",name), c, t)
+     };
+     deep irterm {
+       ret -> 'ret'(value([],[]))
+     | vret -> 'retv'()
+     | br_label -> 'br'(%Sm<<(fnnm,"::",nm))
+     | br -> 'br_c'(cnd([],[]), %Sm<<(fnnm,"::",tr), %Sm<<(fnnm,"::",fl))
+     | else -> ccerror('CCSMALL1:ILLEGALTERM'(node))
+     };
+     deep irval {
+       false -> checkval('const'(0))
+     | true -> checkval('const'(1))
+     | null -> checkval('const'(0))
+     | integer -> checkval('const'(v))
+     | zero -> checkval('const'(0))
+     | undef -> checkval('const'(0))
+     | var -> fun(kind, sval) {
+           chk1 = ohashget(varstkmap, nm);
+           chk2 = ohashget(argstkmap, nm);
+           if (chk1 || chk2) {
+              pos = if(chk1) argstacksize + chk1 else chk2;
+              if (not(kind)) { // loading a var ptr
+                 'loadptr'(pos)
+              } else if (kind === 'load') {
+                 'loadvar'(pos)
+              } else if (kind === 'store') {
+                 'storevar'(pos, sval)
+              } else if (kind === 'gep') dogep(pos, sval, 'stack')
+              else ccerror('CCSMALL1:WTFKIND'(kind))
+           } else { // a global
+              if (not(kind)) { // loading a global pointer
+                 'globptr'(nm)
+              } else if (kind === 'load') {
+                 'loadmem'('globptr'(nm))
+              } else if (kind === 'store') {
+                 'storemem'('globptr'(nm), sval)
+              } else if (kind === 'gep') dogep('globptr'(nm), sval, 'mem')
+              else ccerror('CCSMALL1:WTFKIND'(kind))
+           }
+       }
+     | global -> fun(kind, sval) {
+              if (not(kind)) { // loading a global pointer
+                 'globptr'(nm)
+              } else if (kind === 'load') {
+                 'loadmem'('globptr'(nm))
+              } else if (kind === 'store') {
+                 'storemem'('globptr'(nm), sval)
+              } else if (kind === 'gep') dogep('globptr'(nm), sval, 'mem')
+              else ccerror('CCSMALL1:WTFKIND'(kind))
+           }
+     | expr -> fun(kind, sval) {
+          if (not(kind)) e
+          else if (kind === 'load') {
+             'loadmem'(e)
+          } else if (kind === 'store') {
+             'storemem'(e, sval)
+          } else if (kind === 'gep') dogep(e, sval, 'mem')
+       }
+     | globalfun -> fun(kind, sval) {'globptr'(nm)}
+     | sizeof -> checkval('const'(small1_type_size(t)))
+     | else -> ccerror('CCSMALL1:ILLEGALVAL'(node))
+     };
+   };
+  return 'funct'(fnnm, %Sm<<(fnnm, "::entry"), varstacksize + argstacksize, bblks)
+}}
+
+\pfcode{
+function small1_wordstream_const(name, v) {
+  nv = visit:ir2tree(irval: v) {deep irval {
+    false -> [0]
+  | true  -> [1]
+  | null  -> [0]
+  | integer -> [v]
+  | struct  -> map append e in elts do e
+  | array   -> map append e in elts do e
+  | vector  -> map append e in elts do e
+  | zero    -> {sz = small1_type_size(t); map i in [0..sz] do 0}
+  | undef   -> {sz = small1_type_size(t); map i in [0..sz] do 0}
+  | var     -> [nm]
+  | global  -> [nm]
+  | globalfun -> [nm]
+  | sizeof  -> [small1_type_size(t)]
+  };
+  deep irstructel: v;
+  };
+  len = length(nv);
+  return 'global'(name, len, nv)
+}}
+
+
+\pfcode{
+function small1_tree_lowering_3( types, mdl )
+collector(liftglobal, getglobals) {
+  get_body(f) = visit:ir2tree(irtoplevel:f) {
+     once irtoplevel {%function -> body
+                    | else -> []}};
+  ret = visit:ir2tree(irmodule: mdl) {
+    once irtoplevel {
+       %function -> {
+         <renm:ir2alloc> = small1_regalloc(node);
+          ir2alloc_body = get_body(ir2alloc);
+          return small1_tree_lowering_fun_3(ir2alloc, name, ret, args, ir2alloc_body, liftglobal)
+       }
+     | global -> small1_wordstream_const(name, v)
+     | else -> node
+    }
+  };
+  return getglobals() :: ret;
+}}
+
+\pfcode{
+function small1_tree_lowering_post(mdl) {
+  iszero(n) =
+     visit:ir3tree(irexpr:n) {
+        once irexpr {
+          const -> v==0
+        | else -> []
+        }
+     };
+  visit:ir3tree(irmodule:mdl) {
+     deep irexpr {
+        addrmul -> {
+          if (n==1) idx
+          else if (n==2) {
+             'unary'('SHL', idx)
+          } else if (n==4) {
+             'unary'('SHL','unary'('SHL',idx))
+          } else 'call'('_IMUL',idx,'const'(n))
+        }
+     |  stackptradd -> {
+          if (iszero(idx)) ptr
+          else 'binary'('ADD',ptr, idx)
+        }
+     |  binary -> {
+          if (op === 'ADD') {
+             if (iszero(r)) l else
+             if (iszero(l)) r else node
+          } else node
+        }
+     |  else -> node
+     }
+  }
+}}
+
+\pfcode{
+function small1_alu_op(op) {
+  r = symcase op {
+     ADD -> 'ALU_ADD'()
+   | AND -> 'ALU_AND'()
+   | OR  -> 'ALU_OR'()
+   | XOR -> 'ALU_XOR'()
+   | SHL -> 'ALU_SHL'()
+   | SHR -> 'ALU_SHR'()
+   | NOT -> 'ALU_NOT'()
+   | MUL -> 'ALU_MUL'()
+   | EQ  -> 'ALU_EQ'()
+
+   | UGT -> 'ALU_GE'('n'(0)) 
+   | SGT -> 'ALU_GE'('n'(1)) 
+   | UGE -> 'ALU_GEQ'('n'(0)) 
+   | SGE -> 'ALU_GEQ'('n'(1)) 
+   | ULT -> 'ALU_LE'('n'(0)) 
+   | SLT -> 'ALU_LE'('n'(1)) 
+   | ULE -> 'ALU_LEQ'('n'(0)) 
+   | SLE -> 'ALU_LEQ'('n'(1)) 
+  };
+  if(r) r else 'UNKNOWN_BINOP'(op)
+}}
+
+\pfcode{
+function small1_intrinsic_call(fp, args)
+{
+  getconst(l) = {  // dirty disassembling hack
+    match l with
+      ['PUSH'(v)] -> v
+      // TODO: PUSHSE, PUSHL, PUSHH
+    | else -> ccerror('NOT-A-CONSTANT'(l))
+  };
+  mkcustom(args) = {
+   [@map append a in cdr(args) do a; 'CUSTOMOP'(getconst(car(args)))]
+  };
+  case fp {
+    '_intptr' -> car(args)
+  | '_ptrint' -> car(args)
+  | '_irqack' -> ['BR_IRQACK'()]
+  | '_not' -> [@car(args);'ALU_NOT'()]
+  | '_shlone' -> [@car(args);'ALU_SHL'()]
+  | '_shrone' -> [@car(args);'ALU_SHR'()]
+  | '_ashrone' -> [@car(args);'ALU_ASHR'()]
+  | '_enter_critical' -> ['SETCRITICAL'()]
+  | '_exit_critical' -> ['LIFTCRITICAL'()]
+  | '_perfcounter' -> ['PUSHCOUNTER'('n'(0))] // TODO: more counters
+  | '_perfcounter1' -> ['PUSHCOUNTER'('n'(1))]
+  | '_perfcounter2' -> ['PUSHCOUNTER'('n'(2))]
+  
+  | '_custom2_0'
+  | '_custom2_1'
+  | '_custom1_1'
+  | '_custom1_0'
+  | '_custom0_0'
+  | '_custom0_1' -> mkcustom(args)
+
+  | else -> []
+  }
+}
+}
+
+\pfcode{
+function small1_emit_expr(env, e)
+ {
+    retcode =  [
+                  'READFP'('n'(-1));  // read prev PC
+                   'READFP'('n'(-2));  // read prev FP
+                     'PUSHFP'();    // Current FP
+                       'PUSHSE'('n'(-2));
+                       'ALU_ADD'();   // Calculate old SP from this FP
+                     'SETFPREL'();  // FPREL = old 
+                   'SETFP'();     // restore FP
+                  'SETPCSP'()    // jump back, reset SP from FPREL
+                ];
+    callcode(voidp, args, fn) =
+                 [@if (voidp) [] else ['PUSH'('n'(251))]; // Return value slot
+                  'PUSHFP'(); // Push the old FP
+                  'PUSH'('n'(255));  // Slot for PC
+                  @map append a in args do a;  // fill stack with arguments
+                  @fn;
+                  'PUSHSP'(); // Current SP 
+                  'PUSHSE'('n'(0 - (length(args) + if(fn) 1 else 0))); // TODO: calculate stack mapping for args properly
+                  'ALU_ADD'();
+                  'SETFP'();  // New FP points to the location of old FP + 1
+                              // This is where the first argument will land
+                  'PUSHPC'(); // Calculate return PC
+                  'PUSH'('n'(5));
+                  'ALU_ADD'();
+                  'WRITEFP'('n'(-1))  // Store it in the reserved slot
+                  ];
+    voidfun(fp) = {
+       visit:ir2(irtype: ll_env_fun_retval(env, [], fp)) {
+         once irtype {
+            void -> true
+          | else -> []}}};
+    visit:ir3tree(irexpr: e) {
+      deep irexpr {
+         loadmem -> [@ptr; 'LOADMEM'()]
+       | storemem -> [@v; @ptr; 'STOREMEM'()]
+       | binary -> [@l; @r; small1_alu_op(op)]
+       | unary -> [@v; small1_alu_op(op) ]
+       | call -> {
+                 /*
+                    Call stack:
+                       [OLDFP]
+                       [OLDPC]  <- pushsp here
+                       [ARG0]   <- New FP points here
+                       [ARG1]
+                       ...
+
+                 */
+                  chk = small1_intrinsic_call(fp, args);
+                  if (chk) chk else
+                    [@callcode(voidfun(fp), args, []); 'JUMP'(fp)]
+                 }
+       | callptr -> {
+            voidp = true;
+           [@callcode(voidp, args, fp); 'BR_JMPI'('n'(0))]
+         }
+       | loadvar -> ['READFP'('n'(ptr))]
+       | storevar -> [@v;'WRITEFP'('n'(ptr))]
+       | seq -> map append e in es do e
+       | drop -> [@e; 'POP'()]
+       | br -> ['JUMP'(lbl)]
+       | br_c -> [@cnd; 'JUMP_C'(ltr); 'JUMP'(lfl)] // hope peephole cleans it
+       | retv -> retcode
+       | ret -> [ @e;            // Return value
+                  'WRITEFP'('n'(-3)); // Store it into the slot
+                  @retcode]
+       | const -> if (%number?(v)) {
+           if (over(v)) {
+              lv = .net(v): {
+                 leave (object)((Int32)v & 65535);
+              };
+              hv = .net(v): {
+                 vh0 = (Int32)v;
+                 vh1 = (UInt32)vh0;
+                 leave (object)((Int32)((vh1 >> 16)&65535));
+              };
+             ['PUSHL'('n'(lv)); 'PUSHH'('n'(hv))]
+           } else if (v<0) ['PUSHSE'('n'(v))] else ['PUSH'('n'(v))]
+         } else ['comment'(node)] //TODO!
+       | globptr -> ['PUSH'('a'('lbl'(ptr)))]
+       | loadptr -> ['PUSHFP'(); 'PUSH'('n'(ptr)); 'ALU_ADD'()]
+       | else -> ['comment'(node)] // report an error?          
+      };
+      deep irbblock {
+         bb -> ['LABEL'(lbl);
+                @map append e in es do e;
+                @term]
+      };
+    }
+ }
+}
+
+\pfcode{
+function small1_emit(env, mdl) collector(add, get) {
+   visit:ir3tree(irmodule: mdl) {
+     deep irtop {
+        funct -> if(code)
+                   add('funct'(lbl, %Sm<<(entry, ":0"), stackdepth,
+                         ['bb'(%Sm<<(entry, ":0"),
+                               [
+                                'PUSHSP'();
+                                'PUSH'('n'(stackdepth));
+                                'ALU_ADD'();
+                                'SETSP'();    // Shift SP over the vars slots
+                                'JUMP'(entry)
+                                ]);
+                          @code]))
+     |  global -> add('data'(lbl, map v in words do {
+                             if(%symbol?(v))
+                                'lbl'(v)
+                             else 'n'(v)}))
+     };
+     deep irbblock {
+       bb -> 'bb'(lbl, (map append e in es do e)::term)
+     };
+     once irexpr: forall small1_emit_expr(env, node);
+  };
+  return 'begin'(@get())
+}}
+
+\pfcode{
+function small1_post_pinned(mdl)
+  visit:small1asm(asmtop:mdl) {
+     deep asmtop {
+       funct -> if(lbl === 'bootentry') {
+                  'pinned'(lbl, INITPOS, node)
+                } else node
+     | data -> if(lbl === 'irqtable') {
+                  'pinned'(lbl, IRQTAB, node)
+               } else if(lbl === '_data') {
+                  'final'(node)
+               } else node
+     | else -> node}}}
+
+
+\pfcode{
+function small1_backend_passes(mdl, fnm)
+collector(vladd, vlget) {
+  mdl1 = ir2_functionpass(mdl, ir2remove_phis_pass);
+  envtypes = ll_propagate_types(mdl1);
+  mdl2 = ll_annotate_geps(envtypes, mdl1);
+  mdl2x = hoist_inlined_verilog(vladd, mdl2); ///!!!!!!!!!!
+ <[env;types]> = envtypes;
+  mdl3 = small1_legalise_binops(types, mdl2x);
+  irl =  small1_tree_lowering(mdl3);
+  ir2 =  small1_tree_demote(irl);
+  ir3 =  small1_tree_lowering_post(small1_tree_lowering_3(types, ir2));
+  asm =  small1_post_pinned(small1_emit(env, ir3));
+  lasm = #(call-with-output-file (S<< fnm ".dbg")
+            =pf: fun(fo) {try {
+                             try {small1_lower_asm(asm, fun(s) fprint(fo,s))}
+                             catch (t_MBaseException e) {
+                                println(#`(ERR: ,(mbaseerror e) ,(->s e)));
+                             }
+                          }
+                          catch (t_Exception e) {println(%->s(e)); []}});
+  #(call-with-output-file (S<< fnm ".hex") (fun (fo)
+      (small1_hexfile (fun (s) (fprintln fo s)) lasm 131072)));
+  vlg = vlget();
+  if (vlg) process_inlined_verilog(fnm, vlg);
+  return asm
+}
+}
+
+
+
+%%%

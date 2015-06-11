@@ -1,0 +1,532 @@
+% literate:
+
+\section{Verilog inlining}
+
+We need a full Verilog parser in order to be able to inline code seamlessly,
+and especially for being able to infer port data types for the included
+modules. We also need a pretty--printer for generating Verilog code back from
+the ASTs.
+
+\pfcode{
+#(include "./verilog_ast0.al")
+include "./verilog_lexer.hl"
+include "./verilog_parser.hl"
+include "./verilog_pprint.hl"
+}
+
+At the moment, compiler backend will remove the unused values with no side
+effect, so it's a reasonable idiom for dummy code. Although it might change
+in the future.
+
+\pfcode{
+define %__nop = 'call'('_nop')
+}
+
+\subsection{ASTs}
+
+Inlined Verilog code is digested and processed into a sequence of simpler 
+commands, which are then all consumed at the end of code generation, and sorted
+into a number of Verilog files (which are in turn included into various places
+of the CPU core implementation, see {\tt core.v} for reference).
+
+\pfcode{
+ast vlhoisted {
+  expr = netdef(moduleItem:m)
+       | include(string:dirpath,string:path)
+       | module(description:d)
+       | reset(statement:s)
+       | inst_exec(number:id, number:crc, number:args, statement:s)
+       | inst_return(number:id, number:crc, expression:e)
+       | inst_noreturn(number:id, number:crc)
+       | inst_wait(number:id, number:crc, expression:e, 
+                   *statement:ss, waitrest:r)
+       ;
+  waitrest = else(*statement:ss)
+           | nop()
+           ;
+}
+}
+
+An inlined Verilog syntax is somewhat complex, so we need an AST for 
+representing it in between parsing and inline processing.
+
+\pfcode{
+ast vlinline {
+  itop = define(moduleItem:mi)
+       | instance(ident:nm, *iportbind:ports)
+       | usemodule(string:path)
+       | execop(icvargs:a, *vlgstatement:ss,
+              ioprest:rs)
+       ;
+  icvargs = args(.*icvarg:args)
+          | noargs()
+          ;
+  ioprest = noreturn()
+          | return(vlgxpression:e)
+          | wait(vlgexpression:e, *vlgstatement:ss, iwaitrest:rs)
+          ;
+  iwaitrest = else(*vlgstatement:ss)
+            | nop()
+            ;
+  iportbind = bind(ident:port, iportright:r)
+            | wire(ident:port)
+            ;
+  iportright = reg(ident:id)
+             | wire(ident:id)
+             ;
+  icvarg = argbind(ident:id, expr:e)
+         | arg(ident:id)
+         ;  
+}}
+
+\subsection{Syntax extension for inlining}
+
+An inlining syntax is added to the expression entry of the C parser. A full
+Verilog parser is also inherited here.
+
+\pfcode{
+syntax of pfclike in clexpr, inner (verilog):
+    ' inline verilog [clvinline]:i '
++ {
+       clvinline := { define "{" [moduleItem]:mi "}"  => define(mi)}
+                 /  { instance [moduleident]:nm "("
+                           ecslist<[cvportbind],",">:ports ")" => instance(nm, ports) }
+                 /  { usemodule [string]:s => usemodule(s) }
+                 /  { exec [cvargs]:a "{" eslist<[statement]>:ss "}"
+                      [cvoprest]:rst => execop(a,ss,rst) }
+                 ;
+       cvoprest := { noreturn => noreturn() }
+                /  { return "(" [expression]:e ")" => return(e) }
+                /  { wait "(" [expression]:e ")" 
+                          "{" eslist<[statement]>:ss "}"
+                          [cvwaitrest]:r => wait(e,ss,r) }
+                /  { [empty] => noreturn() }
+                ;
+       cvwaitrest := { else "{" eslist<[statement]>:ss "}" => else(ss) }
+                  /  { [empty] => nop() }
+                  ;
+       cvargs := { "(" cslist<[cvarg],",">:as ")" => args(@as) }
+              /  { [empty] => noargs() }
+              ;
+       cvarg := { [clqident]:id "=" [clexpr]:e => argbind(id,e) }
+             /  { [clqident]:id => arg(id) } // shortcut for "id = id"
+             ;
+       cvportbind := { [clqident]:port "=" [cvportright]:r => bind(port, r) }
+                  /  { [clqident]:port => wire(port) }
+                  ;
+       cvportright := { reg [clqident]:id => reg(id) }
+                   /  { [clqident]:id => wire(id) }
+                   ;
+  }
+{
+  getargs(i) = collector(add, get) {
+     visit:vlinline(itop: i) {
+       once icvarg {
+          argbind -> add('var'(id)) // TODO: bind an expression
+       |  arg -> add('var'(id))
+       }};
+     return get();
+  };
+  getret(i) = visit:vlinline(itop: i) {
+     deep itop {
+        execop -> rs
+      | else -> 'void'()
+     };
+     deep ioprest {
+        return -> 'integer'('i32')
+      | else -> 'void'()
+     }
+  };
+  // We have to resolve a full path here, while still parsing the source file,
+  //  within a correct path context.
+  ipath = visit:vlinline(itop:i) {
+    deep itop {
+      usemodule -> {
+         fullpath =  %generic-filepath(path); // relative to the lookup path
+         mk:node(path=fullpath)
+      }
+    | else -> node
+    }
+  };
+  return 'inline'(getret(i), getargs(i),'verilog'(ipath));
+}}
+
+We also have to be able to parse the included Verilog modules:
+
+\pfcode{
+function parse_verilog_file(pth)
+{
+   // TODO: search in path
+   src = %peg:file->stream(pth);
+   sx0 = parse stream src as verilog;
+   match sx0 with
+     [['FAIL:';@_];@_] -> {
+       writeline(sx0);
+       ccerror('VERILOG-SYNTAX-ERROR'());
+     };
+   return sx0  
+}}
+
+\subsection{Expanding syntax sugar}
+
+Matching the local wires and registers to the included module ports is
+an unpleasant task, so we're eliminating it altogether by infering the wire
+and register widths from the module definition.
+
+There is a limitation at the moment: parameters local to the module scope,
+which can be used in the ports definitions, are not available at the outer scope
+where the module is instantiated. We could do something tricky like lifting all
+the parameters and their dependencies (and renaming them for greater good), but
+at the moment we'll leave it as it is.
+
+\pfcode{
+function verilog_get_module_ports(m)
+{
+  ports=mkhash();
+  addport(type, range, names) = {
+    iter n in names do ohashput(ports, n, [range;type])
+  };
+  mkrange(r) = {
+    if(r) [car(r)] else ['r'('constexpr'('number'(0)),
+                             'constexpr'('number'(0)))]
+  };
+  addports(ps) = 
+    visit:verilog0(ports:ps) {
+      once port {
+         inout  -> addport('inout',mkrange(r),l)
+      |  input  -> addport('input',mkrange(r),l)
+      |  output -> addport('output',mkrange(r),l)
+      |  pref1  -> addport('unknown', mkrange([]),
+                           id)
+      |  else -> ccerror('VERILOG-UNSUPPORTED-MODULE-PORT-TYPE'(node))
+      }};
+  visit:verilog0(description:m) {
+     once description {
+        module -> if(ports) addports(car(ports))
+      | else -> []}};
+  return ports
+}}
+
+\subsection{Processing the inline expressions}
+
+This is a first stage of processing: inline expressions are read and decomposed
+into {\tt vlhoisted} commands. Source module is rewritten, leaving intrinsic
+calls or nops in place of the inline expressions.
+
+\pfcode{
+function hoist_inlined_verilog(out, mdl) {
+  ctx = mkhash(); vctx = mkhash();
+  iids = mkref(0);
+  newiid() = {
+    iid = ^iids;
+    iids := iid + 1; return iid
+  };
+  crc(str) = {
+    // TODO!!! (but not critical)
+    return 0;
+  };
+  build(v) = fun(args) { v };
+  build_noreturn_wait(kind, iid, icrc) = fun(args) {
+     fnm = match args with
+              [a;b] -> '_custom2_0'
+            | [a] -> '_custom1_0'
+            | [] -> '_custom0_0';
+     arg = iid * 65536 + icrc;
+     if (kind==='noreturn')
+        out('inst_noreturn'(iid, icrc));
+     return 'call'(fnm, 'integer'(arg, 'i32'), @args)
+  };
+  build_noreturn(iid, icrc) = build_noreturn_wait('noreturn',iid,icrc);
+  build_wait(iid, icrc) = build_noreturn_wait('wait',iid,icrc);
+  build_return(iid, icrc) = fun(args) {
+     fnm = match args with
+              [a;b] -> '_custom2_1'
+            | [a] -> '_custom1_1'
+            | [] -> '_custom0_1';
+     arg = iid * 65536 + icrc;
+     return 'call'(fnm, 'integer'(arg, 'i32'), @args)
+  };
+  add_netdef(d) = out('netdef'(d));
+  add_module(path) = {
+     fullpath = path;
+     dirpath = %_getpath(fullpath);
+     out('include'(dirpath, fullpath));
+     vmdl = parse_verilog_file(fullpath);
+     visit:verilog0(verilog:vmdl) {
+        deep description {
+           module -> ohashput(vctx, nm, node)
+        |  else -> []
+        }}};
+  rename_expression(e, as) = {
+     visit:verilog0(expression: e) {
+       deep expression {
+         var -> {chk=ohashget(as, nm); if(chk) mk:node(nm=chk) else node}
+       | idx -> {chk=ohashget(as, nm); if(chk) mk:node(nm=chk) else node}
+       | idx2 -> {chk=ohashget(as, nm); if(chk) mk:node(nm=chk) else node}
+       | else -> node
+       }}};
+
+  make_args(a) = {
+    as = mkhash();
+    ss = mkref(['stack_data_a';'stack_data_b']);
+    getnext() = {
+      if (not(^ss)) ccerror('VERILOG-TOO-MANY-ARGUMENTS'(a));
+      c = car(^ss);
+      ss := cdr(^ss);
+      return c;
+    };
+    a1 = visit:vlinline(icvargs:a) {
+      deep icvargs {
+         args -> mk:node(args=reverse(args)) | else -> node}};
+    visit:vlinline(icvargs:a1) {
+       deep icvarg {
+         arg -> ohashput(as, id, getnext())
+       | argbind -> ohashput(as, id, getnext())}};
+    return as
+  };
+  add_exec(iid, icrc, a, ss) = {
+    as = make_args(a);
+    ssnew = visit:verilog0(statement: 'begin'(@ss)) {
+      once expression: forall rename_expression(node, as)};
+    nargs = length(hashmap(fun(k,v) k, as));
+    out('inst_exec'(iid, icrc, nargs, ssnew))
+  };
+  add_return(iid, icrc, ax, e) = {
+    as = make_args(ax);
+    out('inst_return'(iid, icrc, rename_expression(e, as)))
+  };
+  add_wait(iid, icrc, e, ss, rs) = {
+    out('inst_wait'(iid, icrc, e, ss, rs))
+  };
+  gettype(ps, p) = {
+    chk = ohashget(ps, p);
+    match chk with
+       [r;t] -> r
+     | else -> 'r'('constexpr'('number'(0)),'constexpr'('number'(0)))
+  };
+  add_wire(kind, id, tp) = {
+     if (kind === 'reg') {
+       out('reset'('nonblocking'('var'(id),'number'("0"))))
+     };
+     out('netdef'(if(kind==='reg') 'reg'(tp, 'reg'(id))
+                  else 'net'('wire',['range'(car(tp))], [], [id])))
+  };
+  add_wires(mdlports, ports) = {
+    iter p in ports do visit:vlinline(iportbind: p) {
+      deep iportbind {
+         bind -> r(port) | else -> []
+      };
+      deep iportright {
+         reg -> fun(p) {
+           tp = gettype(mdlports, p);
+           add_wire('reg',id, tp);
+         }
+       | wire -> fun(p) {
+           tp = gettype(mdlports, p);
+           add_wire('wire',id, tp);
+         }}}};
+  add_module_connections(mports, ports) = {
+     ph = mkhash();
+     iter p in ports do visit:vlinline(iportbind: p) {
+      deep iportbind {
+         bind -> ohashput(ph, port, r) | else -> []
+      };
+      deep iportright {
+         reg -> 'var'(id) | wire -> 'var'(id)
+      }
+     };
+     hashmap(fun(port, val) {
+         chk = ohashget(ph, port);
+         if(chk) 'n'(port, chk) else
+         'n'(port,
+           case port {
+             'clk' | 'clock' -> 'var'('clk') // CPU core clock
+           | 'rst' | 'reset' -> 'var'('rst') // CPU core neg. reset
+           | else -> ccerror('VERILOG-UNBOUND-PORT'(port))
+           })
+      }, mports);
+  };
+  add_full_instance(nm, mports, ports) = {
+    id = gensym();
+    nminst = 'i'(id, []);
+    // TODO: parameters
+    inst0 = 'mod'(nminst, @'npcs'(@add_module_connections(mports, ports)));
+    inst = 'moduleinst'(nm, [], inst0);
+    out('netdef'(inst));
+  };
+  add_instance(nm, ports) = {
+    vmdl = ohashget(vctx, nm);
+    if (not(vmdl)) ccerror('VERILOG-UNKNOWN-MODULE'(nm));
+    mdlports = verilog_get_module_ports(vmdl);
+    add_wires(mdlports, ports);
+    add_full_instance(nm, mdlports, ports);
+  };
+  hoist(args, code) = {
+    schk = %S<<(code); // code is it's own hash
+    chk = ohashget(ctx, schk);
+    if (chk) chk(args) else {
+      fn = visit:vlinline(itop: code) {
+        deep itop {
+           define -> {
+             add_netdef(mi);
+             build(%__nop )
+           }
+         | instance -> {
+             add_instance(nm, ports);
+             build(%__nop )
+           }
+         | usemodule -> {
+             add_module(path);
+             build(%__nop )
+           }
+         | execop -> {
+             iid = newiid();
+             icrc = crc(schk);
+             add_exec(iid, icrc, a, ss);
+             return rs(iid, icrc, a);
+           }
+        };
+        deep ioprest {
+          noreturn -> fun(iid, icrc, ax) build_noreturn(iid,icrc)
+        | return -> fun(iid, icrc, ax) {
+             add_return(iid, icrc, ax, e);
+             build_return(iid, icrc)
+          }
+        | wait -> fun(iid, icrc, ax) {
+             add_wait(iid, icrc, e, ss, rs);
+             build_wait(iid, icrc)
+          }
+        }
+      };
+      ohashput(ctx, schk, fn);
+      fn(args)
+    }
+  };
+  visit:ir2(irmodule:mdl) {
+    deep irexpr {
+       inline -> hoist(args, cadr(code))
+     | else -> node}}
+}
+}
+
+\subsection{Second stage}
+
+
+In a second stage of translation, {\tt vlhoisted} commands are processed and
+sorted into sections. Output is written into a number of files:
+\verb|outputfile_out/*.v|
+
+If the output directory does not exist, it will be created:
+
+\pfcode{
+function %_mkdir_tmp(path) {
+  .net(path): {
+     System.IO.FileInfo file = new System.IO.FileInfo((string)path);
+     file.get_Directory().Create();
+     leave null;
+  }
+}}
+
+\pfcode{
+function verilog_pprint(entry, v) {
+  return verilog_pprint_string(verilog_pprint_inner([entry;v]))
+}}
+
+\pfcode{
+function process_inlined_verilog_inner(fnm, vlg, fp_exec, fp_wait,
+                                       fp_reset, fp_hoisted, fp_include) {
+  execs = mkhash();
+  waits = mkhash();
+  addexec(id, s0) = {
+    ss = verilog_pprint('statement', s0);
+    chk = ohashget(execs, id);
+    ohashput(execs, id, ss : chk)
+  };
+  emit_wait(e,ss,r) = {
+    %S<<(" if (", verilog_pprint('expression',e), ") ",
+           verilog_pprint('statement','begin'(@ss, 'nonblocking'('var'('state'),'var'('S_IFETCH')))),
+         match r with 
+           'else'(ess) -> %S<<(" else ", verilog_pprint('statement','begin'(@ess)))
+         | else -> "")
+  };
+  iter v in vlg do {
+     visit:vlhoisted(expr:v) {
+         once expr {
+            netdef -> fprintln(fp_hoisted, verilog_pprint('moduleItem', m))
+          | include -> fprintln(fp_include, %S<<("`include \"", path, "\""))
+          | module -> fprintln(fp_include, verilog_pprint('description', d))
+          | reset -> fprintln(fp_reset, verilog_pprint('statement',s))
+          | inst_exec -> { addexec(id, s);
+                           addexec(id, 'nonblocking'('var'('PC'),'var'('INC_PC')));
+                           if (args>0) {
+                              addexec(id, 'nonblocking'('var'('SP'),
+                                              'binop'('-','var'('SP'),
+                                                       'number'(%S<<(args)))))}
+                         }
+                                      
+          | inst_noreturn -> addexec(id,
+                'nonblocking'('var'('state'),'var'('S_IFETCH')))
+          | inst_return -> addexec(id, 'begin'(
+                'nonblocking'(
+                   'var'('do_writeback'),'number'("1")),
+                'nonblocking'('var'('state'),'var'('S_IFETCH')),
+                'nonblocking'('var'('result'), e)))
+          | inst_wait -> {
+              addexec(id,
+                'nonblocking'('var'('state'),'var'('S_CUSTOMWAIT')));
+              ohashput(waits, id, emit_wait(e,ss,r))
+            }
+         }
+     }
+  };
+  fprintln(fp_exec, %S<<("     case(immed[23:16])"));
+  hashiter(fun(id, vs) {
+             fprintln(fp_exec, %S<<("          ",id,": begin"));
+             iter v in vs do fprintln(fp_exec, v);
+             fprintln(fp_exec, %S<<("          end"));
+           }, execs);
+  fprintln(fp_exec, %S<<("     endcase"));
+
+  fprintln(fp_wait, %S<<("     case(immed[23:16])"));
+  hashiter(fun(id, v) {
+             fprintln(fp_wait, %S<<("          ",id,": begin"));
+             fprintln(fp_wait, v);
+             fprintln(fp_wait, %S<<("          end"));
+           }, waits);
+  fprintln(fp_wait, %S<<("     endcase"));
+}
+}
+
+\pfcode{
+function process_inlined_verilog(fnm, vlg) {
+ pfx = %S<<("./",fnm,"_out/");
+ f_exec = %S<<(pfx,"custom_exec.v");
+ f_wait = %S<<(pfx,"custom_wait.v");
+ f_reset = %S<<(pfx,"custom_reset.v");
+ f_hoisted = %S<<(pfx,"custom_hoisted.v");
+ f_include = %S<<(pfx,"custom_include.v");
+ %_mkdir_tmp(f_exec);
+ #(call-with-output-file f_exec
+  (fun (fp_exec)
+  (call-with-output-file f_wait
+  (fun (fp_wait)
+  (call-with-output-file f_reset
+  (fun (fp_reset)
+  (call-with-output-file f_hoisted
+  (fun (fp_hoisted)
+  (call-with-output-file f_include
+  (fun (fp_include)
+     (process_inlined_verilog_inner fnm vlg fp_exec fp_wait
+                                    fp_reset fp_hoisted fp_include)))))))))))
+
+}}
+
+
+%%%%%%%%%%%%%%%
+
+
+
+
+
+
+
