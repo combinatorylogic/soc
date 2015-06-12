@@ -117,6 +117,7 @@ int spi_transfer_w32(unsigned int *send_buffer, unsigned int *receive_buffer)
   unsigned int snd = *send_buffer;
   unsigned int dst;
   snd = to_little(snd);
+  if(fd == 0) spi_init();
   int ret = spi_transfer((unsigned char *)&snd,(unsigned char *)&dst,4);
   *receive_buffer = to_little(dst);
   // printf("SENT:[%x] GOT:[%x]\n", *send_buffer, *receive_buffer);
