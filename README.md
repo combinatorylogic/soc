@@ -4,6 +4,8 @@ Toy SoC toolchain (c) by Meta Alternative Ltd, 2015
 
 # DESCRIPTION
 
+[![Build Status](https://travis-ci.org/combinatorylogic/soc.svg?branch=master)](https://travis-ci.org/combinatorylogic/soc)
+
 This is a sample toy machine backend for Clike compiler, designed for teaching
 fundamentals of computing and for exploring hardware-software co-design and
 higher-level HDL synthesis.
