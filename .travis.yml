@@ -1,0 +1,16 @@
+language: csharp
+env:
+  global:
+    - PATH=$HOME/mbase/bin:$PATH
+before_install:
+	- sudo apt-get update -qq
+	- sudo apt-get install -qq verilator
+  - git clone https://github.com/combinatorylogic/mbase.git
+  - (cd mbase/bin; make)
+  - (cd mbase/bin; sudo make install)
+install:
+script: 
+  - git submodule update --init
+  - make clikecc.exe
+  - make hwtests
+  - make hdltests
