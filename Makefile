@@ -22,6 +22,10 @@ hwtests: backends/small1/hw/soc/logipi/verilated/obj_dir/simx clikecc.exe
 hdltests: backends/small1/hw/soc/logipi/verilated/obj_dir/simx clikecc.exe
 	$(MAKE) -C backends/small1/sw/hdltests runtests
 
+longtests: backends/small1/hw/soc/logipi/verilated/obj_dir/simx clikecc.exe
+	$(MAKE) -C backends/small1/sw/long_tests runtests
+	$(MAKE) -C backends/small1/sw/long_hdltests runtests
+
 logipi:
 	$(MAKE) -C backends/small1/hw/soc/logipi
 
