@@ -4,7 +4,7 @@ env:
     - PATH=$HOME/mbase/bin:$PATH
 before_install:
   - sudo apt-get update -qq
-  - sudo apt-get install -qq verilator
+  - sudo apt-get install -qq verilator texlive-latex
   - git clone https://github.com/combinatorylogic/mbase.git
   - (cd mbase/bin; make)
   - (cd mbase/bin; sudo make install)
