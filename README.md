@@ -30,7 +30,7 @@ Timer IRQs should be trivial to add.
 
 Compiler accepts a [C-like extensible language](https://github.com/combinatorylogic/clike). It
 is possible to inline Verilog code into C to seamlessly enhance
-the CPU core functionality, see backends/small1/sw/hdltests/test1.c for example.
+the CPU core functionality, see backends/small1/sw/long_hdltests/test1.c for example.
 
 # BUILDING
 
@@ -87,7 +87,7 @@ or simulation binaries (see backends/small1/sw/hdltest/runtest.sh for example).
 For example:
 ```bash
     make clikecc.exe
-    mono clikecc.exe /out hdltest1 backends/small1/sw/hdltests/test1.c
+    mono clikecc.exe /out hdltest1 backends/small1/sw/long_hdltests/test1.c
    # Install the generated Verilog files into the build infrastructure
     cp hdltest1_out/*.v   backends/small1/hw/custom/
    # Rebuild the bitfile
