@@ -4,3 +4,6 @@ prep:
 
 exe:  prep
 	cd obj_dir; make -f ../Makefile_obj
+
+clean:
+	rm -rf obj_dir

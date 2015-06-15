@@ -179,9 +179,9 @@ parser verilog (veriloglex) {
 
    netDeclaration "net declaration" :=
                 { trireg ([chargeStrength]:s)? ([expandrange]:er)? ([delay]:d) => trireg(s,er,d) }
-              / { [nettype]:nt ([driveStrength]:ds)? ([expandrange]:er)? ([delay]:d)?
+              / { [nettype]:nt ([signed]:ss)? ([driveStrength]:ds)? ([expandrange]:er)? ([delay]:d)?
                          [listOfAssignments]:as ";" => netas(nt,ds,er,d,as) }
-              /  { [nettype]:nt ([expandrange]:r)? ([delay]:d)? [listOfVariables]:l ";" =>
+              /  { [nettype]:nt ([signed]:ss)? ([expandrange]:r)? ([delay]:d)? [listOfVariables]:l ";" =>
                           net(nt,r,d,l) }
               ;
 
@@ -195,7 +195,9 @@ parser verilog (veriloglex) {
          /  { [range]:r => range(r) }
          ;
 
-   regDeclaration := reg ([range]:r)? [listOfRegisterVariables]:rs ";" => reg(r,@rs);
+   signed := { signed => signed() };
+
+   regDeclaration := reg ([signed]:sg)? ([range]:r)? [listOfRegisterVariables]:rs ";" => reg(r,@rs);
    timeDeclaration := time [listOfRegisterVariables]:rs ";" => time(@rs);
    integerDeclaration := integer [listOfRegisterVariables]:rs ";" => integer(@rs);
    realDeclaration := real [listOfVariables]:rs ";" => real(@rs);
@@ -204,7 +206,7 @@ parser verilog (veriloglex) {
 
    continousAssign := { assign ([driveStrength]:ds)? ([delay]:d)? [listOfAssignments]:as ";"
                             => assign(ds, d, as) }
-                   /  { [nettype]:nt ([driveStrength]:ds)? ([expandrange]:e)? ([delay]:d)? 
+                   /  { [nettype]:nt  ([signed]:ss)? ([driveStrength]:ds)? ([expandrange]:e)? ([delay]:d)? 
                              [listOfAssignments]:as ";" => assignnt(nt, ds, e, d, as) }
                    ;
 
