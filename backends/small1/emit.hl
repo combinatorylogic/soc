@@ -776,16 +776,28 @@ function small1_post_pinned(mdl)
                } else node
      | else -> node}}}
 
+\pfcode{
+function small1_inline_pred(f) {
+  is_inline(l) = find(fun(k) match k with 'inline'() -> true | else -> [], l);
+  visit:ir2(irtoplevel:f) {
+    deep irtoplevel {
+      %function -> if(body) is_inline(annotations) else []
+    | else -> []}}}}
 
 \pfcode{
 function small1_backend_passes(mdl, fnm)
 collector(vladd, vlget) {
-  mdl1 = ir2_functionpass(mdl, ir2remove_phis_pass);
-  envtypes = ll_propagate_types(mdl1);
-  mdl2 = ll_annotate_geps(envtypes, mdl1);
-  mdl2x = hoist_inlined_verilog(vladd, mdl2); ///!!!!!!!!!!
+  envtypes = ll_propagate_types(mdl);
+  mdl2 = ll_annotate_geps(envtypes, mdl);
+  mdl2x = hoist_inlined_verilog(vladd, mdl2);
  <[env;types]> = envtypes;
-  mdl3 = small1_legalise_binops(types, mdl2x);
+  mdl2y = small1_legalise_binops(types, mdl2x);
+  mdl2z = ir2_inline(small1_inline_pred, mdl2y);
+  mdl2z1 = ir2_inline(small1_inline_pred, mdl2z);
+  mdl2z2 = ir2_inline(small1_inline_pred, mdl2z1);
+  mdl3 = ir2_functionpass(mdl2z2, ir2remove_phis_pass);
+  envtypes = ll_propagate_types(mdl3);
+ <[env;types]> = envtypes;
   irl =  small1_tree_lowering(mdl3);
   ir2 =  small1_tree_demote(irl);
   ir3 =  small1_tree_lowering_post(small1_tree_lowering_3(types, ir2));

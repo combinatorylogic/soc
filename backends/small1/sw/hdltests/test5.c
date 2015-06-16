@@ -59,12 +59,12 @@ void bootentry()
   
   _printtsth("result1=", res1);
   _printtsth("  ...mod=", md1);
-  _printtst("  Cycles: ", c1-c0);
-  _printtst("  Insns: ", i1-i0);
+  _printtst(">>  Cycles: ", c1-c0);
+  _printtst(">>  Insns: ", i1-i0);
   _printtsth("result2=", res2);
   _printtsth("  ...mod=", md2);
-  _printtst("  Cycles: ", c1h-c0h);
-  _printtst("  Insns: ", i1h-i0h);
+  _printtst(">>  Cycles: ", c1h-c0h);
+  _printtst(">>  Insns: ", i1h-i0h);
   
   _testhalt();
 }

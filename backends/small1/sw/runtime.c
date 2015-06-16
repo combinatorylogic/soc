@@ -2,7 +2,7 @@ typedef int32 int;
 typedef uint32 uint;
 
 /* 1. Intrinsic declarations */
-
+void _nop();
 
 void _irqack();  // exit from an IRQ handler
 
@@ -36,33 +36,33 @@ int32 _custom1_1(int32 cmd, int32 x);
 int32 _custom2_1(int32 cmd, int32 x, int32 y);
 
 // Library functions
-int32 _LOGNOT(int32 x) {
+inline int32 _LOGNOT(int32 x) {
   return _not(x)&0x1;
 }
 
-int32 _SLT(int32 l, int32 r) {
+inline int32 _SLT(int32 l, int32 r) {
   return (l-r)&0x80000000; // is l-r negative?
 }
-int32 _ULT(int32 l, int32 r) {
-  return (l-r)&0x80000000; // is l-r negative?
-}
-
-int32 _SLE(int32 l, int32 r) {
-  return (l-r)&0x80000000; // is l-r negative?
-}
-int32 _ULE(int32 l, int32 r) {
+inline int32 _ULT(int32 l, int32 r) {
   return (l-r)&0x80000000; // is l-r negative?
 }
 
-int32 _SGT(int32 l, int32 r) {
+inline int32 _SLE(int32 l, int32 r) {
+  return (l-r)&0x80000000; // is l-r negative?
+}
+inline int32 _ULE(int32 l, int32 r) {
+  return (l-r)&0x80000000; // is l-r negative?
+}
+
+inline int32 _SGT(int32 l, int32 r) {
   return (r-l)&0x80000000; // is l-r negative?
 }
 
-int32 _SGE(int32 l, int32 r) {
+inline int32 _SGE(int32 l, int32 r) {
   return l==r || (r-l)&0x80000000; // is l-r negative?
 }
 
-uint32 _SHR(uint32 a, uint32 b) {
+inline uint32 _SHR(uint32 a, uint32 b) {
   uint32 i = b;
   uint32 r = a;
   do {
@@ -71,7 +71,7 @@ uint32 _SHR(uint32 a, uint32 b) {
   return r;
 }
 
-int32 _ASHR(int32 a, int32 b) {
+inline int32 _ASHR(int32 a, int32 b) {
   int32 i = b;
   int32 r = a;
   do {
@@ -80,7 +80,7 @@ int32 _ASHR(int32 a, int32 b) {
   return r;
 }
 
-int32 _SHL(int32 a, int32 b) {
+inline int32 _SHL(int32 a, int32 b) {
   int32 i = b;
   int32 r = a;
   do {
@@ -90,7 +90,7 @@ int32 _SHL(int32 a, int32 b) {
 }
 
 // Russian peasant multiplication
-int32 _IMUL(int32 a0, int32 b0)
+inline int32 _IMUL(int32 a0, int32 b0)
 {
   int32 a = a0;
   int32 b = b0;
@@ -105,7 +105,7 @@ int32 _IMUL(int32 a0, int32 b0)
 }
 
 // Integer division
-int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
+inline int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
 {
   int32 nQuotient = 0;
   int32 nPos = -1;
@@ -138,26 +138,26 @@ int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
   return nQuotient;
 }
 
-int32 _IUDIV(int32 a, int32 b)
+inline int32 _IUDIV(int32 a, int32 b)
 {
   uint32 rem;
   return _IDIVMOD(a, b, &rem);
 }
 
-int32 _ISDIV(int32 a, int32 b)
+inline int32 _ISDIV(int32 a, int32 b)
 {
   uint32 rem;
   return _IDIVMOD(a, b, &rem);
 }
 
-int32 _IUREM(int32 a, int32 b)
+inline int32 _IUREM(int32 a, int32 b)
 {
   uint32 rem;
   _IDIVMOD(a, b, &rem);
   return rem;
 }
 
-int32 _ISREM(int32 a, int32 b)
+inline int32 _ISREM(int32 a, int32 b)
 {
   uint32 rem;
   _IDIVMOD(a, b, &rem);
@@ -165,7 +165,7 @@ int32 _ISREM(int32 a, int32 b)
 }
 
 // Send a character via an SPI link
-void _printchr(uint32 chr)
+inline void _printchr(uint32 chr)
 {
   uint32 *channel = _intptr(0x10004);
   uint32 *notfull = _intptr(0x10005);
