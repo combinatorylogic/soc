@@ -807,9 +807,10 @@ collector(vladd, vlget) {
                              try {small1_lower_asm(asm, fun(s) fprint(fo,s))}
                              catch (t_MBaseException e) {
                                 println(#`(ERR: ,(mbaseerror e) ,(->s e)));
+                                exit(-1);
                              }
                           }
-                          catch (t_Exception e) {println(%->s(e)); []}});
+                          catch (t_Exception e) {println(%->s(e)); exit(-1)}});
   #(call-with-output-file (S<< fnm ".hex") (fun (fo)
       (small1_hexfile (fun (s) (fprintln fo s)) lasm 131072)));
   vlg = vlget();

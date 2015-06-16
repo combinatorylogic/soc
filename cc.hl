@@ -19,11 +19,11 @@ function ir2backend_small1(mdl, fnm)
   } catch (t_MBaseException e) {
     println(mbaseerror(e));
     println(%->s(e));
-    return mdl
+    exit(-1);
   }
  } catch (t_Exception e) {
    println(%->s(e));
-   return mdl
+   exit(-1)
  }
 }
 
