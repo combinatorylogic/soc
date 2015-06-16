@@ -40,29 +40,29 @@ inline int32 _LOGNOT(int32 x) {
   return _not(x)&0x1;
 }
 
-inline int32 _SLT(int32 l, int32 r) {
+int32 _SLT(int32 l, int32 r) {
   return (l-r)&0x80000000; // is l-r negative?
 }
-inline int32 _ULT(int32 l, int32 r) {
-  return (l-r)&0x80000000; // is l-r negative?
-}
-
-inline int32 _SLE(int32 l, int32 r) {
-  return (l-r)&0x80000000; // is l-r negative?
-}
-inline int32 _ULE(int32 l, int32 r) {
+int32 _ULT(int32 l, int32 r) {
   return (l-r)&0x80000000; // is l-r negative?
 }
 
-inline int32 _SGT(int32 l, int32 r) {
+int32 _SLE(int32 l, int32 r) {
+  return (l-r)&0x80000000; // is l-r negative?
+}
+int32 _ULE(int32 l, int32 r) {
+  return (l-r)&0x80000000; // is l-r negative?
+}
+
+int32 _SGT(int32 l, int32 r) {
   return (r-l)&0x80000000; // is l-r negative?
 }
 
-inline int32 _SGE(int32 l, int32 r) {
+int32 _SGE(int32 l, int32 r) {
   return l==r || (r-l)&0x80000000; // is l-r negative?
 }
 
-inline uint32 _SHR(uint32 a, uint32 b) {
+uint32 _SHR(uint32 a, uint32 b) {
   uint32 i = b;
   uint32 r = a;
   do {
@@ -80,7 +80,7 @@ inline int32 _ASHR(int32 a, int32 b) {
   return r;
 }
 
-inline int32 _SHL(int32 a, int32 b) {
+int32 _SHL(int32 a, int32 b) {
   int32 i = b;
   int32 r = a;
   do {
@@ -90,7 +90,7 @@ inline int32 _SHL(int32 a, int32 b) {
 }
 
 // Russian peasant multiplication
-inline int32 _IMUL(int32 a0, int32 b0)
+int32 _IMUL(int32 a0, int32 b0)
 {
   int32 a = a0;
   int32 b = b0;
@@ -138,7 +138,7 @@ inline int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
   return nQuotient;
 }
 
-inline int32 _IUDIV(int32 a, int32 b)
+int32 _IUDIV(int32 a, int32 b)
 {
   uint32 rem;
   return _IDIVMOD(a, b, &rem);
@@ -150,14 +150,14 @@ inline int32 _ISDIV(int32 a, int32 b)
   return _IDIVMOD(a, b, &rem);
 }
 
-inline int32 _IUREM(int32 a, int32 b)
+int32 _IUREM(int32 a, int32 b)
 {
   uint32 rem;
   _IDIVMOD(a, b, &rem);
   return rem;
 }
 
-inline int32 _ISREM(int32 a, int32 b)
+int32 _ISREM(int32 a, int32 b)
 {
   uint32 rem;
   _IDIVMOD(a, b, &rem);
@@ -165,7 +165,7 @@ inline int32 _ISREM(int32 a, int32 b)
 }
 
 // Send a character via an SPI link
-inline void _printchr(uint32 chr)
+void _printchr(uint32 chr)
 {
   uint32 *channel = _intptr(0x10004);
   uint32 *notfull = _intptr(0x10005);
