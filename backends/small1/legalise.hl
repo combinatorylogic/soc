@@ -34,6 +34,7 @@ We do not do anything with floating point operations at the moment.
 define small1_enable_mul = mkref([])
 }
 
+
 \pfcode{
 %"ir2 -> ir2"
 function small1_legalise_binops(types, mdl)
@@ -89,5 +90,104 @@ function small1_legalise_binops(types, mdl)
     };
   }
 }}
+
+
+\subsection{Switch legalisation}
+
+\pfcode{
+function small1_is_nearly_continuous(cases) {
+  //TODO: implement some heuristics, maybe detect sub-clusters too
+  return true
+}}
+
+\pfcode{
+function small1_lower_switch_jumptable(addv, addbb, node) {
+  // Build a static table (using an ir2x lbltable extension), emit an indirectbr
+
+  maketable(cases, els) = {
+     // Saturate the list of cases, filling the gaps with an else branch
+     // N.B.: assuming cases are sorted
+     satcases = collector(add,get) {
+        getnum(l) = match l with integer(v, @itp) -> v 
+                               | else -> ccerror('WAT'());
+        gettyp(l) = match l with integer(v, @itp) -> itp 
+                               | else -> ccerror('WAT'());
+        diff(l,r) = {
+           itp = gettyp(l);
+           ln = getnum(l);
+           lr = getnum(r);
+           return map i in [(ln+1)..lr] do 'integer'(i, @itp)
+        };
+        do loop(c = cases, prev=[]) {
+           match c with 
+             hd:tl -> {
+                if(prev) {
+                  gap = diff(prev, car(hd));
+                  iter i in gap do add([i;els])
+                };
+                add(hd); loop(tl, car(hd))}};
+        return get()};
+     l = caar(cases);
+     r = caar(lasttail(cases));
+     lbls = map [v;d] in satcases do d;
+     vlus = map [v;d] in satcases do v;
+     tbllabel = gensym();
+     tbl = 'jumptable'(tbllabel, els,@lbls);
+     return [tbllabel; tbl; unifiq(lbls); l; r]
+  };
+  emit_clamp_call(v,l,r) = {
+     return 'call'('__jumptable_clamp', v, l, r)
+  };
+  visit:ir2(irterm: node) { 
+    once irterm {
+      switch -> symbols(idx, addrptr, addr) {
+       <[tbllabel;tbl;lbls;left;right]> = maketable(cases, els);
+        // clamp and shift the index; table[0] always contain 'els' label
+        // never mind the call, it's going to be inlined
+        addv([idx; emit_clamp_call(value, left, right)]);
+        // it's important to keep the tables embedded here, they'll be
+        // recalculated on inlining and other optimisations that may move
+        // basic blocks (i.e., labels) around. Lifting jumptables
+        // to the top level is the last thing the backend should do.
+        addv([addrptr; 'getelementptr'(tbl, ['var'(idx)], 'pointer'('integer'('i32')))]);
+        addv([addr; 'load'('var'(addrptr))]);
+        // tbllabel is important here: labels in the jump table
+        //  are relative against PC at this jump instruction location
+        return 'indirectbr_jt'(tbllabel, 'var'(addr),@(els:lbls))
+      }
+    | else -> ccerror('WAT'())
+    }
+  }
+}}
+
+\pfcode{
+function small1_lower_switch_tree(addv, addbb, node) {
+  //TODO: implement; take sub-clusters into account
+  []
+}}
+
+\pfcode{
+function small1_legalise_terms_inner(code) 
+collector(addbb, getbbs) {
+  c0 = visit:ir2(ircode:code) {
+    deep irbblock {
+       bblock -> collector(addv, getv) {
+          nt = t(addv);
+          return mk:node(c = c::getv(), t = nt)}};
+    deep irterm {
+       switch -> fun(addv) { // the most naive switch lowering ever
+          contp = small1_is_nearly_continuous(cases);
+          if (contp) small1_lower_switch_jumptable(addv, addbb, node)
+            else small1_lower_switch_tree(addv, addbb, node)
+         }
+    | else -> fun(addv) node}};
+  return c0::getbbs();
+}}
+
+\pfcode{
+function small1_legalise_terms(mdl)
+  visit:ir2(irmodule:mdl) {
+    once ircode: small1_legalise_terms_inner(node);
+  }}
 
 %%%%%%%%

@@ -90,14 +90,15 @@ ast small1asm {
    //   any opcodes.
    | JUMP(lblident:dst)
    | JUMP_C(lblident:dst)
+   | BR_JMPRI_LBL(lblident:rel)
 
    // Real branching
    | BR_JMP(address:dst)
    | BR_JMPR(address:dst)
    | BR_JMPC(address:dst)
    | BR_JMPRC(address:dst)
-   | BR_JMPI(immediate:im)
-   | BR_JMPRI(immediate:im)
+   | BR_JMPI()
+   | BR_JMPRI()
    | BR_IRQACK()
 
    // Immediate
@@ -417,7 +418,12 @@ function small1_lower_asm(mdl, dbpf)
         bb -> fun(pos) {
                  len = length(code);
                  addlabel(lbl, pos);
+                 iter c in code count i do c(pos+i);
                  return pos + len;}};
+      deep asminst {
+         BR_JMPRI_LBL -> fun(pos) addlabel(rel, pos)
+       | else -> fun(pos) []
+      };
       deep asmtop {
         funct -> {
            addlabel(lbl, p);
@@ -442,6 +448,7 @@ function small1_lower_asm(mdl, dbpf)
    deep asminst {
       JUMP -> fun(pos) jump(dst, pos, [])
     | JUMP_C -> fun(pos) jump(dst, pos, 'C')
+    | BR_JMPRI_LBL -> fun(pos) 'BR_JMPRI'()
     | else -> fun(pos) node
    };
    deep asmbblock {

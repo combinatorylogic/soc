@@ -17,7 +17,7 @@ void _printtst(int32 *str, int32 num)
 }
 
 // Integer division
-int32 _IDIVMODHW(int32 nDividend, int32 nDivisor, int32 *Mod)
+inline int32 _IDIVMODHW(int32 nDividend, int32 nDivisor, int32 *Mod)
 {
   inline verilog usemodule "./divide.v";
   inline verilog instance idivmodhw(dividend = reg div0_dividend,

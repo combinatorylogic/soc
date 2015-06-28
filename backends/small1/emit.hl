@@ -74,6 +74,7 @@ ast ir3tree {
       // Branching (high level, mode will be chosen by assembler)
     | br(lblident:lbl)
     | br_c(irexpr:cnd, lblident:ltr, lblident:lfl)
+    | br_jt(lblident:relname, irexpr:addr)
       // High level return ABI handling
     | ret(irexpr:e)
     | retv()
@@ -82,6 +83,7 @@ ast ir3tree {
       //   or lifted into the external memory
     | const(any:v) // may be an immediate or a global
     | addr(lblident:v) // load a static address
+    | jumptable(lblident:lbl, .*lblident:vs)
       // TEMP
     | other(any:v)
     ;
@@ -440,6 +442,7 @@ function small1_tree_lowering_fun_3(fn, fnnm, rettp, args, body, liftglobal)
      | vret -> 'retv'()
      | br_label -> 'br'(%Sm<<(fnnm,"::",nm))
      | br -> 'br_c'(cnd([],[]), %Sm<<(fnnm,"::",tr), %Sm<<(fnnm,"::",fl))
+     | indirectbr_jt -> 'br_jt'(%Sm<<(fnnm,"::",relname), addr([],[]))
      | else -> ccerror('CCSMALL1:ILLEGALTERM'(node))
      };
      deep irval {
@@ -493,6 +496,7 @@ function small1_tree_lowering_fun_3(fn, fnnm, rettp, args, body, liftglobal)
        }
      | globalfun -> fun(kind, sval) {'globptr'(nm)}
      | sizeof -> checkval('const'(small1_type_size(t)))
+     | jumptable -> fun(kind, sval) dogep('jumptable'(%Sm<<(fnnm,"::", rel),@map v in vs do %Sm<<(fnnm,"::", v)), sval, 'mem')
      | else -> ccerror('CCSMALL1:ILLEGALVAL'(node))
      };
    };
@@ -641,7 +645,7 @@ function small1_intrinsic_call(fp, args)
 }
 
 \pfcode{
-function small1_emit_expr(env, e)
+function small1_emit_expr(env, e, liftglob)
  {
     retcode =  [
                   'READFP'('n'(-1));  // read prev PC
@@ -704,6 +708,7 @@ function small1_emit_expr(env, e)
        | drop -> [@e; 'POP'()]
        | br -> ['JUMP'(lbl)]
        | br_c -> [@cnd; 'JUMP_C'(ltr); 'JUMP'(lfl)] // hope peephole cleans it
+       | br_jt -> [@addr; 'BR_JMPRI_LBL'(relname)]
        | retv -> retcode
        | ret -> [ @e;            // Return value
                   'WRITEFP'('n'(-3)); // Store it into the slot
@@ -723,6 +728,11 @@ function small1_emit_expr(env, e)
          } else ['comment'(node)] //TODO!
        | globptr -> ['PUSH'('a'('lbl'(ptr)))]
        | loadptr -> ['PUSHFP'(); 'PUSH'('n'(ptr)); 'ALU_ADD'()]
+       | jumptable -> symbols(tblnm) {
+            liftglob('data'(tblnm,
+                            map v in vs do 'addrexpr'('SUB', 'lbl'(v), 'lbl'(lbl))));
+            ['PUSH'('a'('lbl'(tblnm)))]
+         }
        | else -> ['comment'(node)] // report an error?          
       };
       deep irbblock {
@@ -757,7 +767,7 @@ function small1_emit(env, mdl) collector(add, get) {
      deep irbblock {
        bb -> 'bb'(lbl, (map append e in es do e)::term)
      };
-     once irexpr: forall small1_emit_expr(env, node);
+     once irexpr: forall small1_emit_expr(env, node, add);
   };
   return 'begin'(@get())
 }}
@@ -791,7 +801,8 @@ collector(vladd, vlget) {
   mdl2 = ll_annotate_geps(envtypes, mdl);
   mdl2x = hoist_inlined_verilog(vladd, mdl2);
  <[env;types]> = envtypes;
-  mdl2y = small1_legalise_binops(types, mdl2x);
+  mdl2yo = small1_legalise_binops(types, mdl2x);
+  mdl2y =  small1_legalise_terms(mdl2yo);
   mdl2z = ir2_inline(small1_inline_pred, mdl2y);
   mdl2z1 = ir2_inline(small1_inline_pred, mdl2z);
   mdl2z2 = ir2_inline(small1_inline_pred, mdl2z1);

@@ -35,6 +35,13 @@ int32 _custom0_1(int32 cmd);
 int32 _custom1_1(int32 cmd, int32 x);
 int32 _custom2_1(int32 cmd, int32 x, int32 y);
 
+// Todo: implement it as a special instruction?
+int32 *__jumptable_clamp(int32 v, int32 l, int32 r)
+{
+  if (v>=l && v<=r) return v-l+1;
+  return 0;
+}
+
 // Library functions
 inline int32 _LOGNOT(int32 x) {
   return _not(x)&0x1;
@@ -312,3 +319,4 @@ void _testhalt()
   while(!bufferptr) ; // wait for any input
   _HALT();
 }
+
