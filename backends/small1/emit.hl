@@ -700,7 +700,7 @@ function small1_emit_expr(env, e, liftglob)
                  }
        | callptr -> {
             voidp = true;
-           [@callcode(voidp, args, fp); 'BR_JMPI'('n'(0))]
+           [@callcode(voidp, args, fp); 'BR_JMPI'()]
          }
        | loadvar -> ['READFP'('n'(ptr))]
        | storevar -> [@v;'WRITEFP'('n'(ptr))]

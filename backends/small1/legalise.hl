@@ -176,9 +176,15 @@ collector(addbb, getbbs) {
           return mk:node(c = c::getv(), t = nt)}};
     deep irterm {
        switch -> fun(addv) { // the most naive switch lowering ever
-          contp = small1_is_nearly_continuous(cases);
-          if (contp) small1_lower_switch_jumptable(addv, addbb, node)
-            else small1_lower_switch_tree(addv, addbb, node)
+          getval(v) = 
+            visit:ir2(irval:car(v)) {
+              once irval {
+                integer -> v | else -> ccerror('WAT'())}};
+          scases = qsort(fun(l, r) getval(l) < getval(r), cases);
+          sortnode = mk:node(cases=scases);
+          contp = small1_is_nearly_continuous(scases);
+          if (contp) small1_lower_switch_jumptable(addv, addbb, sortnode)
+            else small1_lower_switch_tree(addv, addbb, sortnode)
          }
     | else -> fun(addv) node}};
   return c0::getbbs();

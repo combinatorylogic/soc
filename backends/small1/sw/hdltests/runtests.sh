@@ -1,5 +1,5 @@
 #!/bin/bash
-
+set -e
 
 for f in *.c
 do
