@@ -164,9 +164,10 @@ function small1_tree_lowering_bb(src, globuses)
       };
     };
   fixexpr(e) =
-    visit:ir2(irexpr:e) {
-      once irval: forall fixval(node, fixexpr);
-    };
+    do fixexpr(e=e)
+     visit:ir2(irexpr:e) {
+       once irval: forall fixval(node, fixexpr);
+     };
   fixterm(t) =
     visit:ir2(irterm:t) {
       once irval: forall fixval(node, fixexpr);
