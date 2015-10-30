@@ -1,0 +1,93 @@
+
+// data: array of 2048 words
+// Must be rearranged into an array of 8 blocks of 2048x2 bits
+
+function scramble_words(arr)
+{
+  // 0: bits [ 1: 0]
+  // 1: bits [ 3: 2]
+  // 2: bits [ 5: 4]
+  // 3: bits [ 7: 6]
+  // 4: bits [ 9: 8]
+  // 5: bits [11:10]
+  // 6: bits [13:12]
+  // 7: bits [15:14]
+  lst = map i in [0..8] do collector(add,get) add:get;
+  n_rshift(a,b) = 
+    notnet(int a, int b)
+     {leave a>>b;};
+  iter (a:g) in lst count i do
+   iter j in [0..16] do
+     iter b in [0..256] do {
+          col = 2*i + n_bitand(b/8,1);
+          row = b/16 + j*16 + 256*n_bitand(b,7);
+          bit = n_bitand(n_rshift(aget(arr, row), col),1);
+          a(bit)};
+   mkhex(n) = .net(n): { leave ((Int32)n).ToString("x"); };
+   map (a:g) in lst do {
+      bits = g(); // list of 2-bit chunks, must be accumulated into 256-bit hex strings
+      hexs = do loop(b = bits, count = 0, acc = "") {
+         match b with
+            b0:b1:b2:b3:rest -> {
+                nb = b0 + b1*2 + b2*4 + b3*8;
+                if (count<64)
+                   loop(rest, count+1, %S<<(mkhex(nb),acc))
+                else
+                   acc : loop(rest, 1, mkhex(nb))}
+          | else -> [acc]};
+      return hexs}}
+
+function ice40_scramble(data) {
+   sdata = scramble_words(data);
+   map s in sdata count num do
+     num: map d in s count i do {
+        %S<<("    .INIT_", i, "(256'h", d, ")")
+     }}
+
+function ice40_makeram(name, data) {
+scrambled = ice40_scramble(data);
+%S<<("
+module ",name," (input clk,
+	         input [10:0]  addr,
+	         input [15:0]  data_in,
+	         output [15:0] data_out,
+	         input         we,
+	         input         re);
+",strinterleave(
+map (num:dwords) in scrambled do
+%S<<("
+  SB_RAM2048x2 #(
+", strinterleave(dwords, ",
+"), "
+  ) ram_",num," (
+    .RDATA(data_out[",num*2+1,":",num*2,"]),
+    .RADDR(addr),
+    .RCLK(clk),
+    .RCLKE(1'b1),
+    .RE(1'b1),
+    .WCLK(clk),
+    .WCLKE(1'b1),
+    .WE(we),
+    .WADDR(addr),
+    .MASK(16'h0000),
+    .WDATA(data_in[",num*2+1,":",num*2,"]));
+
+"), ""), "
+endmodule
+")}
+
+function ice40_buildrams(arr)
+   map (pos:nm) in [0:   'ram4k_low_low';
+                    2048:'ram4k_low_high';
+                    4096:'ram4k_high_low';
+                    6144:'ram4k_high_high'] do {
+      mkarray(n) =
+         .net(n): {
+            leave (object)(new int [(int)n]);
+         };
+      subarr = mkarray(2048);
+      iter i in [0..2048] do aset(subarr, i, aget(arr, i+pos));
+      ice40_makeram(nm, subarr)
+   }
+
+////////////////////

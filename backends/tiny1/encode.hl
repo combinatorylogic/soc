@@ -1,0 +1,303 @@
+% literate:
+
+\section{$\mu$-assembler}
+
+\subsection{AST and parsing}
+
+\pfcode{
+ast muast {
+   muop = oplabel(ident:l)
+        | label(ident:l)
+        | withcnd(muexpr:e,mucnd:c)
+        | nocnd(muexpr:e)
+        | stop()
+        ;
+   muexpr = dst(mureg:dst, muatom:a);
+   
+   mureg = a() | b() | c() | pc() | regmem()
+         | mem() | immed(number:n) | longconst(number:n)
+         | isrc() | cr();
+   muatom = shr(mualu:a, number:n)
+          | shl(mualu:a, number:n)
+          | noshift(mualu:a)
+          ;
+   mualu = plus(mureg:l)
+         | bitand(mureg:l)
+         | bitnot(mureg:l)
+         | copy(mureg:l)
+         ;
+   mucnd = jump(label:l) | jz(label:l) | jnz(label:l) | stop() | none();
+}}
+
+\pfcode{
+parser mucode (pfront) {
+   !!Spaces;
+   [lexical:] := [lexical] => {ctoken = lexic};
+   [keyword:] := [keyword] ![IdentRest] => {ctoken = keyword};
+
+   mucode := slist<[muop]>:ss [Spaces]* => ss;
+   muop :=
+           { "@" [ident]:l ":" => oplabel(l) }
+        /  { [ident]:l ":" => label(l) }
+        /  { STOP => stop() }
+        /  { [muexpr]:e [mucnd]:c ";"? => withcnd(e, c) }
+        /  { [muexpr]:e ";"? => nocnd(e) }
+        ;
+   mucnd := { jump [ident]:l => jump(l) }
+         /  { jz [ident]:l => jz(l) }
+         /  { jnz [ident]:l => jnz(l) }
+         /  { STOP => stop() }
+         ;
+
+   muexpr := [mureg]:r "=" [muatom]:a => dst(r, a)
+          ;
+   mureg := { A => a() }
+         /  { B => b() }
+         /  { CR => cr() }
+         /  { C => c() }
+         /  { PC => pc() }
+         /  { ISRC => isrc() }
+         /  { "{" C "}" => regmem() }
+         /  { "[" C "]" => mem() }
+         /  { "#" [xnumber]:n => longconst(n) }
+         /  { [xnumber]:n => immed(n) }
+         ;
+
+   muatom := { [mualu]:a ">>" [xnumber]:n => shr(a, n) }
+          /  { [mualu]:a "<<" [xnumber]:n => shl(a, n) }
+          /  { [mualu]:a => noshift(a) }
+          ;
+          
+   mualu := { [mureg]:l "+" B => plus(l) }
+         /  { [mureg]:l "&" B => bitand(l) }
+         /  { "~" [mureg]:l => bitnot(l) }
+         /  { [mureg]:l => copy(l) }
+         /  { "(" [mualu]:a ")" => a}
+         ;
+   xnumber := [hexnumber] / [number];
+
+}}
+
+
+\subsection{Lowering the $\mu$-AST}
+
+The next intermediate representation is closer to the bit packed $\mu$op encoding.
+
+\pfcode{
+ast mucode {
+  muop = mu(mudst:d, mualu:a, mushft:sh,
+            mumem:m, mucnd:c,
+            muimmed:i, mulong:l)
+       | label(label:l)
+       | oplabel(label:l)
+       ;
+  mulong = none() | long(number:n);
+  mudst = none() | a() | b() | c() | pc();
+  mualu = none() | plus() | bitand() | bitnot();
+  mushft = shl() | shr() | shr4() | none();
+  mumem = none() | read() | write() | isrc() | cr();
+  mucnd = none() | jz() | jnz() | jump();
+  muimmed = none() | label(ident:n) | num(number:n) | c() | pc() | regmem() | longconst();
+}}
+
+Now we have to break down the hierarchical representation of each assembly line
+into a flat $\mu$-op structure suitable for bitpacking.
+
+\pfcode{
+function tiny1_muop_compile(mu) {
+  encdst(dst) =
+     visit:muast (mureg: dst) {
+        deep mureg {
+           immed -> ccerror('IMMEDIATE-DST'())
+         | isrc -> ccerror('ISRC-DST'())
+         | cr -> ccerror('CR-DST'())
+         | else -> node}};
+  getlabel(cnd) = visit:muast (mucnd: cnd) {
+        deep mucnd {
+           jump -> l | jz -> l | jnz -> l | stop -> '*STOP*' | none -> []}};
+  enccnd(cnd) = visit:muast (mucnd: cnd) {
+        deep mucnd {
+           jump -> 'jump'() | jz -> 'jz'() | jnz -> 'jnz'()
+         | stop -> 'jump'() | none -> 'none'()}};
+  encsrcreg(src, cnd) = {
+     cl = getlabel(cnd);
+     visit:muast (mureg: src) {
+        deep mureg {
+           immed -> if(cl) ccerror('IMMED-AND-JUMP'()) else ['none'();'num'(n)]
+         | isrc  -> if(cl) ccerror('ISRC-AND-JUMP'()) else ['isrc'();'num'(0)]
+         | cr    -> if(cl) ccerror('CR-AND-JUMP'()) else ['cr'();'num'(1)]
+         | pc    -> if(cl) ccerror('PC-AND-JUMP'()) else ['none'();'pc'()]
+         | c     -> if(cl) ccerror('C-AND-JUMP'()) else ['none'();'c'()]
+         | a     -> ['none'(); if(cl) 'label'(cl) else 'none'()]
+         | mem   -> ['read'(); if(cl) 'label'(cl) else 'none'()]
+         | regmem -> if(cl) ccerror('REGMEM-AND-JUMP'()) else ['read'();'regmem'()]
+         | longconst -> if(cl) ccerror('LONGCONST-AND-JUMP'()) else ['read'();'longconst'()]
+         | else  -> ccerror('WRONG-SRC'(mu))}}};
+
+  enclong(src) =
+     visit:muast (mureg: src) {
+        deep mureg {
+           longconst -> 'long'(n)
+         | else -> 'none'()}};
+
+  memcheck(m, n) = visit:mucode (mumem: m) {
+     once mumem {
+        none -> n | else -> ccerror('MEMMODE'())}};
+
+  imcheck(i, n) = visit:mucode (muimmed: i) {
+     once muimmed {
+        none -> n | else -> ccerror('IMMEDMODE'(i,n))}};
+
+  fixdst(dst, mem, im) =
+     visit:muast (mureg: dst) { once mureg {
+        mem -> ['none'(); memcheck(mem, 'write'()); im]
+      | regmem -> ['none'(); memcheck(mem, 'write'()); imcheck(im, 'regmem'())]
+      | else -> [dst; mem; im]}};
+
+  mkshr(n) = if(n==1) 'shr'() else if(n==4) 'shr4'() else ccerror('SHR'());
+  mkshl(n) = if(n==1) 'shl'() else ccerror('SHL'());
+
+  encsrc(src, dst, cnd) =
+     visit:muast (muatom: src) {
+        deep muatom {
+           shr -> a(mkshr(n))
+         | shl -> a(mkshl(n))
+         | noshift -> a('none'())};
+        deep mualu (sh) {
+           plus -> l('plus'(), sh)
+         | bitand -> l('bitand'(), sh)
+         | bitnot -> l('bitnot'(), sh)
+         | copy -> l('none'(), sh)};
+        deep mureg {
+           else -> {
+             <[mem;im]> = encsrcreg(node, cnd);
+              longc = enclong(node);
+             <[dst1;mem1;im1]> = fixdst(dst, mem, im);
+              cnd1 = enccnd(cnd);
+              fun(al, sh)
+                 'mu'(dst1, al, sh, mem1, cnd1, im1, longc)}};
+     };
+
+  visit:muast (muop: mu) {
+     deep muexpr {
+        dst -> fun(cnd) {
+           d = encdst(dst);
+           return encsrc(a, d, cnd)}};
+     deep muop {
+        withcnd -> e(c)
+      | nocnd -> e('none'())
+      | stop -> tiny1_muop_compile('withcnd'('dst'('a'(), 'noshift'('copy'('a'()))), 'stop'()))
+      | else -> node}}}}
+
+
+\subsection{Resolving the labels and bitpacking}
+
+\pfcode{
+define muNOP = 'mu'('a'(), 'none'(), 'none'(), 'none'(), 'none'(), 'none'(), 'none'())
+function tiny1_muop_labels(code) collector(opadd, opsget) {
+  lbls = mkhash();
+  islong(n) =
+     visit:mucode(muop: n) {
+       deep muop { mu -> l | else -> []};
+       deep mulong { none -> [] | else -> n}};
+  ncode = do loop(c = code, pos = 0) {
+     match c with
+       'label'(l):rest -> {
+          ohashput(lbls, l, pos); loop(rest, pos)}
+     | 'oplabel'(l):rest -> {
+          opadd(pos); loop(rest, pos)}
+     | n : rest -> {
+          lng = islong(n);
+          if (lng) {
+            if ((pos mod 2) == 1) {  // must insert a nop
+               [pos;muNOP] : ([pos+1;n] : loop(rest, pos + 3))
+            } else {
+               [pos;n] : loop(rest, pos + 2)}
+          } else [pos;n] : loop(rest, pos + 1)}
+     | else -> []};
+  ncode1 = map [pos;n] in ncode do
+     visit:mucode(muop: n) {
+        deep muimmed {
+           label -> {
+              if (n === '*STOP*') return 'num'(0)
+              else {
+                dst = ohashget(lbls, n);
+                if (not(dst)) {
+                   ccerror('UNKNOWN-LABEL'(n))};
+                diff = dst - pos;
+                if (diff < -30 || diff > 31) {
+                   ccerror('UNREACHEABLE-LABEL'(pos, dst))};
+                return 'num'(diff)}}
+         | else -> node}};
+  return [opsget(); ncode1]
+}}
+
+
+\pfcode{
+function tiny1_muop_bitpack(al, sh, ds, mm, cn, is, immd, simmed) {
+  if(cn==0) 
+   .bitpack( 16 |
+     4: immd,
+     2: is,
+     2: cn,
+     2: mm,
+     2: ds,
+     2: sh,
+     2: al)
+  else
+   .bitpack( 16 |
+     6: simmed,
+     2: cn,
+     2: mm,
+     2: ds,
+     2: sh,
+     2: al)}}
+
+
+\pfcode{
+function tiny1_muop_bitenc(mu) {
+  bit6sig(n) = n_bitand(n, 63);
+  bit16sig(n) = n_bitand(n, 0xffff);
+  getlong(l) = visit:mucode(mulong: l) {
+     once mulong { long -> [bit16sig(n)] | else -> []}};
+
+  visit:mucode (muop: mu) {
+     deep muop {
+        mu -> {<[is;immd;simmed]> = i;
+                [tiny1_muop_bitpack(a, sh, d, m, c, is, immd, simmed);@getlong(l)]}
+      | else -> ccerror('IMPOSSIBLE'())};
+     deep mualu {
+        none -> 2 | plus -> 0 | bitand -> 1 | bitnot -> 3};
+     deep mushft {
+        none -> 0 | shl -> 1 | shr -> 2 | shr4 -> 3};
+     deep mudst {
+        none -> 0 | a -> 0 | b -> 1 | c -> 2 | pc -> 3};
+     deep mumem {
+        none -> 0 | read -> 1 | write -> 2 | isrc -> 3 | cr -> 3};
+     deep mucnd {
+        none -> 0 | jz -> 1 | jnz -> 2 | jump -> 3};
+     deep muimmed {
+        none -> [0;0;0]
+      | num  -> [1;n;bit6sig(n)]
+      | c    -> [3;0;0]
+      | pc   -> [2;0;0]
+      | regmem -> [0;1;1]
+      | longconst -> [0;2;2]
+
+      | else -> ccerror('IMPOSSIBLE'())
+      }}}}
+
+\pfcode{
+function tiny1_compile_file(src)
+{ microcode = %peg:file->stream(src);
+  t = parse stream microcode as mucode;
+  // todo: if fail
+  tt = map t do tiny1_muop_compile(t);
+ <[l2;tt2]> = tiny1_muop_labels(tt);
+  tt3 = map append t in tt2 do tiny1_muop_bitenc(t);
+  endof = length(tt3)*2+152;
+  etabl = map l in l2 do 152+l*2;
+  return [endof; etabl; tt3]
+}}
+
+%%%%%%%%%%%

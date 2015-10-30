@@ -1,0 +1,10 @@
+set_io TXD 8
+set_io RXD 9
+set_io clk 21
+set_io rst 3
+set_io LED5 99
+set_io LED4 98
+set_io LED3 97
+set_io LED2 96
+set_io LED1 95
+

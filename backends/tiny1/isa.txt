@@ -1,0 +1,133 @@
+* Macroops:
+
+16 registers,
+
+  R0  = 0 by convention (feel free to break)
+  R14 = SP
+  R15 = FP
+
+** Encodings:
+
+[15 ... 0] = [4b: opcode, 4bit:rdst, 4bit:r1, 4bit:r2]
+[15 ... 0] = [5b: opcode, 11bit:immed]
+[15 ... 0] = [5b: opcode, 7bit:n/a, 4bit:reg]
+[15 ... 0] = [5b: opcode, 4bit:reg, 7bit:immed]
+
+** Opcodes:
+
+0      : PUSH  <Rsrc>
+1      : POP   <Rdst>
+2,3    : ADD   <Rdst>,<Rsrc1>,<Rsrc2>
+4,5    : SUB   <Rdst>,<Rsrc1>,<Rsrc2>
+6,7    : AND   <Rdst>,<Rsrc1>,<Rsrc2>
+8,9    : OR    <Rdst>,<Rsrc1>,<Rsrc2>
+10,11  : NAND  <Rdst>,<Rsrc1>,<Rsrc2>
+12     : MOV   <Rdst>,<Rsrc>
+13     : MOVI  <Rdst>,<IMMED7>
+14,15  : LOAD  <Rdst>,<Raddr>,<Roffset>
+16,17  : STORE <Rsrc>,<Raddr>,<Roffset>
+18     : JUMP  <SIMMED11>
+19     : JZ    <Rsrc>, <SIMMED7>
+20     : JNZ   <Rsrc>, <SIMMED7>
+21     : CALL  <SIMMED11>
+22     : JUMPI <Rdst>
+23     : CALLI <Rdst>
+24     : RET
+25     : INC   <Rdst>
+26     : DEC   <Rdst>
+27     : SHL   <Rdst>, <Rsrc>
+28     : SHR   <Rdst>, <Rsrc>
+29     : NOT   <Rdst>, <Rsrc>
+30     : EXTENDED 32-bit instruction (reserved)
+
+   LONGIMMED <Rdst>, <IMMED16>
+   ADDC <Rdst>, <Rsrc1>, <Rsrc2>
+
+31     : CUSTOM <IMMED11> - for Verilog inlining
+
+Microops: 16bit
+
+[AL SH DS MM CN IS IMMD]
+[ ---- / ----   SI-MMED]
+
+2bit - ALU:
+  00 - dst = SRC + B
+  01 - dst = SRC & B
+  10 - dst = SRC
+  11 - dst = !SRC
+
+2bit - shift:
+  00 - 0
+  01 - +1
+  10 - -1
+  11 - -4
+
+2bit - DST (if not mem write)
+  00 - A
+  01 - B
+  10 - C
+  11 - PC
+
+2bit - MEM/ISRC
+  00 - nothing
+  01 - read from [C] into prev. A (before ALU and jump),
+         if IM==0 && IMMED == 1, add the O bit to C
+           (i.e., C.eff = 0b10000|C) --- for interrupt handling
+           
+  10 - write ALU DST to [C] (after ALU, DST write is suppressed)
+  11 - copy ISRC into prev. A (before ALU)
+
+2bit - cnd
+  00 - no jump
+  01 - jump if DST==0
+  10 - jump if DST!=0
+  11 - jump always, if DST=0 - quit
+
+[
+ 2bit - immed src (if not jumping)
+   00 - nothing
+   01 - immed -> ALU
+   10 - PC -> ALU
+   11 - C  -> ALU
+
+ 4bit - immed
+] or
+[ 6bit - simmed for jumping ]
+
+;;;;;;;;;
+Registers (16-bit):
+
+  A, B, C,
+  PC, MPC,
+  ISRC,
+
+  muOP
+
+;;;;;;;;;
+
+Execution:
+
+ loop:
+   - fetch ISRC from [PC]
+   - fetch MPC  from [taboffset + ISRCq4]
+
+   muloop:
+      - fetch muOP from [MPC]
+      - execute /may fetch or write/
+      - write DST
+
+FSM stages:
+
+  FETCH_ISRC - set up address, go to FETCH_MPC
+  FETCH_MPC  - add offset, set up address, go to FETCH_MUOP
+  FETCH_MUOP - set up address, null flags, go to EXEC_MUOP
+  EXEC_MUOP  -
+     if reading, set up address, remove read bit, set up fake src flag,
+        go to EXEC_MUOP.
+     if not reading:
+       perform ALU and shifting
+       if writing, set up address and value (from alu output), otherwise
+          set up DST
+       if jumping, set up MPC
+       if done, goto FETCH_ISRC, else goto FETCH_MUOP
+  

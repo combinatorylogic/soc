@@ -1,0 +1,371 @@
+
+% literate:
+
+\section{Tiny1 macroassembler}
+
+\pfcode{include "./bitpack.hl"}
+
+\pfcode{
+ast tiny1asm {
+  op = push(reg:src)
+     | pushrel(simmed10:i)
+
+     | pop(reg:dst)
+     | binop(binop:op, reg:dst, reg:a, reg:b) // add, sub, and, or, nand
+     | mov(reg:dst, reg:src)
+     | movi(reg:dst, immed7:i)
+     | load(reg:dst, reg:a, reg:o)
+     | store(reg:src, reg:a, reg:o)
+     | jump(simmed11:i)
+     | jz(reg:src, simmed7:i)
+     | jnz(reg:src, simmed7:i)
+     | call(simmed11call:i)
+     | jumpi(reg:dst)
+     | calli(reg:dst)
+     | ret()
+     | inc(reg:dst)
+     | dec(reg:dst)
+     | shl(reg:dst, reg:src)
+     | shr(reg:dst, reg:src)
+     | not(reg:dst, reg:src)
+     
+     // extended 32-bit:
+     | addc(reg:dst, reg:a, reg:b)
+     | longimmed(reg:dst, immed16:b)
+
+     // Arbitrary data:
+     | word(number:n)
+     ;
+   binop = add() | sub() | and() | or() | nand();
+   reg = r0() | r(number:n) | sp() | fp(); // n = 1..13
+}}
+
+\subsection{Source language}
+
+\pfcode{
+ast tiny1asmsrc : tiny1asm () {
+   simmed10 = n(number:n) | label(ident:l);
+   simmed11 = n(number:n) | label(ident:l);
+   simmed11call
+            = n(number:n) | label(ident:l);
+   simmed7  = n(number:n) | label(ident:l);
+   immed7   = n(number:n) | label(ident:l);
+   immed16  = n(number:n) | label(ident:l);
+   op += label(ident:l)
+       | align(number:n)
+       | wordlbl(ident:l)
+       | string(string:s)
+       ;
+}}
+
+\subsection{Parser}
+
+\pfcode{
+parser tiny1asmp (pfront) {
+   !!Spaces;
+   [lexical:] := [lexical] => {ctoken = lexic};
+   [keyword:] := [keyword] ![IdentRest] => {ctoken = keyword};
+
+   tiny1asmp := slist<[asmopany]>:os [Spaces]* => os;
+   xnumber := [hexnumber] / [number];
+
+   asmopany := { [asmop]:op ";"? => op }
+            /  { [ident]:l ":" => label(l) }
+            ;   
+
+   asmbinop := { "+" => add() }
+            /  { "&" => and() }
+            /  { "-" => sub() }
+            /  { "|" => or() }
+            /  { "^&" => nand() }
+            ;
+
+   asmop :=
+            { ".align" [xnumber]:n => align(n) }
+         /  { ".word" "@" [ident]:l => wordlbl(l) }
+         /  { ".word" [xnumber]:b => word(b) }
+         /  { ".asciiz" [string]:s => string(s) }
+         /  { "push" [reg]:r => push(r) }
+         /  { "push" "@" [ident]:l => pushrel(label(l)) }
+         /  { [reg]:r "=" pop => pop(r) }
+         /  { [reg]:d "=" "#" [xnumber]:n => longimmed(d, n(n)) }
+         /  { [reg]:d "=" "#" "@" [ident]:l => longimmed(d, label(l)) }
+         /  { [reg]:d "=" [reg]:a [asmbinop]:o [reg]:b => binop(o, d, a, b) }
+         /  { [reg]:d "=" [reg]:a "c+" [reg]:b => addc(d, a, b) }
+         /  { [reg]:d "=" [reg]:s => mov(d, s) }
+         /  { [reg]:d "=" [xnumber]:n => movi(d, n(n)) }
+         /  { [reg]:d "=" "@" [ident]:l => movi(d, label(l)) }
+         /  { [reg]:d "=" "!" [reg]:s => not(d, s) }
+         /  { [reg]:d "=" "[" [reg]:a "+" [reg]:o "]" => load(d,a,o) }
+         /  { [reg]:d "=" "[" [reg]:a "]" => load(d,a,r0()) }
+         /  { [reg]:d "++" => inc(d) }
+         /  { [reg]:d "--" => dec(d) }
+         /  { [reg]:d "<<" [reg]:s => shl(d,s) }
+         /  { [reg]:d ">>" [reg]:s => shr(d,s) }
+         /  { call [asmlabel]:l => call(l) }
+         /  { goto [asmlabel]:l => jump(l) }
+         /  { goto "<" [reg]:r ">" => jumpi(r) }
+         /  { call "<" [reg]:r ">" => calli(r) }
+         /  { ret => ret() }
+         /  { "[" [reg]:a "+" [reg]:o "]" "=" [reg]:s => store(s,a,o) }
+         /  { "[" [reg]:a "]" "=" [reg]:s => store(s,a,r0()) }
+         /  { if [reg]:r goto [asmlabel]:l => jnz(r,l) }
+         /  { if "!" [reg]:r goto [asmlabel]:l => jz(r,l) }
+         ;
+   reg := { r0 => r0() }
+       /  { "r" [number]:n => r(n) }
+       /  { sp => sp() }
+       /  { fp => fp() }
+       ;
+   asmlabel := { [ident]:i => label(i) }
+            /  { [xnumber]:n => n(n) }
+            ;
+}
+}
+
+
+\subsection{Label resolution, immediate checking}
+
+\pfcode{
+function tiny1_string_to_words(s) {
+  l = map a in %string->list(s) do ascii(a);
+  l = l::[0];
+  do loop (l = l) {
+     match l with
+       [a;b;@rest] -> 'word'(.bitpack(16| 8: a, 8: b)) : loop(rest)
+     | [a] -> ['word'(a)]
+     | [] -> []}}}
+
+\pfcode{
+function tiny1_sanitise_input(code) {
+  map append op in code do
+    visit:tiny1asmsrc(op:op) {
+     deep op {
+        string -> tiny1_string_to_words(s)
+      | else -> [node]}}}}
+
+\pfcode{
+function tiny1_level_op(op, pos, lbls) {
+  check(bits, n) = n; // TODO!
+  diff2(lbl, pos) = {
+     l = ohashget(lbls, lbl);
+     if (not(l)) ccerror('UNKNOWN-LABEL'(lbl));
+     d = l - pos;
+     if (not((d mod 2) == 0)) ccerror('IMPOSSIBLE'());
+     return d / 2};
+  diff8(lbl, pos) = {
+     l = ohashget(lbls, lbl);
+     if (not(l)) ccerror('UNKNOWN-LABEL'(lbl));
+     if (not((l mod 8) == 0)) ccerror('UNALIGNED'(lbl, pos, l));
+     npos = pos / 8;
+     d = (l/8) - npos;
+     return d};
+  visit:tiny1asmsrc(op:op) {
+     deep op {
+        label -> []
+      | align -> []
+      | wordlbl -> ['word'(ohashget(lbls, l))]
+      | else -> [node]};
+     deep simmed10 {
+        n -> check(10, n)
+      | label -> check(10, diff2(l, pos))};
+     deep simmed11call {
+        n -> check(11, n)
+      | label -> check(11, diff8(l, pos))};
+     deep simmed11 {
+        n -> check(11, n)
+      | label -> check(11, diff2(l, pos))};
+     deep immed7 {
+        n -> check(7, n)
+      | label -> check(7, diff2(l, pos))};
+     deep immed16 {
+        n -> n
+      | label -> ohashget(lbls, l)};
+     deep simmed7 {
+        n -> check(7, n)
+      | label -> check(7, diff2(l, pos))}}}}
+
+\pfcode{
+function tiny1_macroasm_labels(dbg, code, initpos) {
+  lbls = mkhash();
+  islong(op) = visit:tiny1asmsrc(op:op) {
+     once op {
+        addc -> true | longimmed -> true | else -> []}};
+  ncode = do loop(c = code, pos = initpos) {
+     match c with
+        'label'(l):rest -> {
+           ohashput(lbls, l, pos); loop(rest, pos)}
+      | 'align'(n):rest -> {
+           x1 = pos / n;
+           x2 = x1 * n;
+           diff0 = pos mod n;
+           diff = if(diff0>0) {(x2+n) - pos} else 0;
+           if (not((diff mod 2) == 0)) ccerror('IMPOSSIBLE'());
+           ndiff = diff/2;
+           (map i in [0..ndiff] do [pos+ndiff*2; 'word'(0)]
+           ) :: loop(rest, pos + diff)}
+      | n:rest -> {
+           lng = islong(n);
+           [pos;n]:loop(rest, pos + (if(lng) 4 else 2))}
+      | else -> []};
+  lbls :
+   (map append [pos;n] in ncode do {
+      if(dbg) fprintln(dbg, %S<<(pos,":   ", n));
+      tiny1_level_op(n, pos, lbls)})
+  }}
+
+\subsection{Macroinstruction encoding}
+
+\pfcode{
+function tiny1_bitcode_macroop(op) {
+
+  pack1reg(opc, reg) = [.bitpack(16|4:reg, 7:0, 5:opc)];
+  pack3reg(opc, rdst, r1, r2) = [.bitpack(16|4: r2, 4:r1, 4:rdst, 4:(opc/2))];
+  packi11(opc, i11) = [.bitpack(16|11:i11, 5:opc)];
+  packi10(opc, pfx, i10) = [.bitpack(16|10:i10, 1:pfx, 5:opc)];
+  packi7(opc, reg, i7) = [.bitpack(16|7:i7, 4:reg, 5:opc)];
+  packext3reg(opc, rdst, r1, r2) = [.bitpack(16|4:0, 7:opc, 5: 30);
+                                    .bitpack(16|4:r2, 4:r1, 4:rdst, 4:0)];
+  packext3immed(opc, rdst, imm) = [.bitpack(16|4:rdst, 7:opc, 5: 30);
+                                   imm];
+  
+  visit:tiny1asm(op: op) {
+    deep binop {
+      add -> 2 | sub -> 4 | and -> 6 | or -> 8 | nand -> 10};
+    deep reg {
+      r0 -> 0 | r -> n | sp -> 14 | fp -> 15};
+    deep op {
+       word -> [n]
+     | push -> pack1reg(0, src)
+     | pushrel -> packi10(0, 1, i)
+     | pop  -> pack1reg(1, dst)
+     | binop -> pack3reg(op, dst, a, b)
+     | mov -> pack3reg(12, 0, dst, src)
+     | movi -> packi7(13, dst, i)
+     | load -> pack3reg(14, dst, a, o)
+     | store -> pack3reg(16, src, a, o)
+     | jump -> packi11(18, i)
+     | jz -> packi7(19, src, i)
+     | jnz -> packi7(20, src, i)
+     | call -> packi11(21, i)
+     | jumpi -> pack1reg(22, dst)
+     | calli -> pack1reg(23, dst)
+     | ret -> pack1reg(24, 0)
+     | inc -> pack1reg(25, dst)
+     | dec -> pack1reg(26, dst)
+     | shl -> pack3reg(27, 0, dst, src)
+     | shr -> pack3reg(28, 0, dst, src)
+     | not -> pack3reg(29, 0, dst, src)
+
+     | addc -> packext3reg(1, dst, a, b)
+     | longimmed -> packext3immed(0, dst, b)
+    }
+  }
+}}
+
+\pfcode{
+function tiny1_asm_compile_backend(dbg, src0, addr) {
+  src = tiny1_sanitise_input(src0);
+ <lbs:t1> = tiny1_macroasm_labels(dbg, src, addr);
+  t2 = map append i in t1 do tiny1_bitcode_macroop(i);
+  return lbs:t2}}
+
+\pfcode{
+function tiny1_asm_compile(dbg, s, addr) {
+  src0 = parse stream s as  tiny1asmp;
+  return tiny1_asm_compile_backend(dbg, src0, addr)}}
+
+\subsection{Building a complete memory image}
+
+\pfcode{include "./encode.hl"}
+
+\pfcode{#(force-class-flush)}
+
+Static microcode:
+\pfcode{
+// TODO: relative path
+define static_microcode =
+  #(ctime
+     `(quote ,(tiny1_compile_file "./sw/microcode.s")))}
+
+\pfcode{include "./mkmem.hl"}
+
+\pfcode{
+function tiny1_asm_frontend(fo, dbgfo, memfo, src) {
+    INITIAL_PC = 140;
+
+   <[endof; etabl; tt3]> = static_microcode;
+
+    asmstart = endof + 2;
+    asmstart = (asmstart/2) * 2; // align
+
+   <tbl:asmcode> = tiny1_asm_compile(dbgfo, %peg:file->stream(src), asmstart);
+    main = ohashget(tbl, 'main'); // main entry
+    if (not(main)) ccerror('NO-MAIN-ENTRY'());
+
+    irqhandl = ohashget(tbl, 'irq'); // irq handler entry
+    if (not(irqhandl)) ccerror('NO-IRQ-ENTRY'());
+
+   <tblx:initcode> = tiny1_asm_compile_backend([],
+         #`((longimmed (r 1) (n ,main))
+            (jumpi (r 1))), INITIAL_PC);
+
+   <tblx:irqcode> = tiny1_asm_compile_backend([],
+         #`((longimmed (r 1) (n ,irqhandl))
+            (jumpi (r 1))), INITIAL_PC);
+
+    // all together
+    mkarray(n) =
+       .net(n): {
+          leave (object)(new int [(int)n]);
+       };
+    mem = mkarray(8192); // 16kb ram
+    // TODO: different values for 1k and 8k
+    aset(mem, 14, 7168); // initial SP
+    aset(mem, 15, 7168); // initial FP
+    iter e in etabl count i do aset(mem, 32+i, e); // microcode entry table
+    iter e in initcode count i do aset(mem, 70+i, e); // init code
+    iter e in irqcode count i do aset(mem, 64+i, e); // irq entry code
+    iter e in tt3 count i do aset(mem, 76+i, e); // microcode table
+    iter e in asmcode count i do aset(mem, asmstart/2+i, e); // code
+    println(%S<<("Microcode: 76 - ", 76+length(tt3)));
+    println(%S<<("Code is ", length(asmcode)," words, ends at ", asmstart/2 + length(asmcode)));
+    // hex dump
+    hex(n) =
+      .net(n): {
+         leave ((Int32)n).ToString("x");
+      };
+    fprintln(fo, hex(8192));
+    iter i in %a->l(mem) do {
+      fprintln(fo, hex(i))};
+    // ice40 ram dump
+    iter m in ice40_buildrams(mem) do
+       fprintln(memfo, m);
+}}
+
+\pfcode{
+function main() {
+try {
+  try {
+    cmd = %a->l( %*CMDLINE* );
+    match cmd with
+      [srcnm] -> {
+        dbgnm = %S<<(srcnm, ".dbg");
+        hexnm = %S<<(srcnm, ".hex");
+        memnm = %S<<(srcnm, ".v");
+        %call-with-output-file(dbgnm,
+          fun(dbgfo)
+            %call-with-output-file(hexnm,
+              fun(fo)
+                %call-with-output-file(memnm,
+                   fun(memfo) tiny1_asm_frontend(fo, dbgfo, memfo, srcnm))))}
+   | else -> println("Usage: asm <file.s>")}
+  catch (t_MBaseException e) {
+    writeline(mbaseerror(e));
+    println(%->s(e))
+  }}
+  catch (t_Exception e) {
+    println(%->s(e))
+  }}}
+
+%%%%%%%%%%

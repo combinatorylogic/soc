@@ -1,0 +1,24 @@
+% literate:
+
+\section{Naive codegen for Tiny1}
+
+\pfcode{include "./asm.hl"} 
+
+\pfcode{
+ast tiny1asm_ir : tiny1asm ( reg -> oreg) {
+
+  reg = vreg(ident:id) | vimmed(number:v) | reg(oreg:r);
+
+}}
+
+\pxxxfcode{
+function tiny1_lower_to_vregs(bb) {
+   visit:ir2 (irbblock: bb) {
+      deep irpair: e(nm);
+      deep irexpr (dstnm) {
+         load -> 'load'(mkreg(dstnm), ptr, 'vimmed'(0))
+       | store -> 'store'(e, ptr, 'vimmed'(0))
+       
+      }
+   }
+}}
