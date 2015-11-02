@@ -138,10 +138,10 @@ void step(CPU *state)
                                    case 0: // UART valid. TODO!
                                            MEMRD = 1;
                                            break;
-                                   case 1: // UART din
+                                   case 2: // UART din
                                            MEMRD = getchar();
                                            break;
-                                   case 2: // UART ready.
+                                   case 4: // UART ready.
                                            MEMRD = 1;  // always ready
                                            break;
                                    default: break;
@@ -174,7 +174,7 @@ void step(CPU *state)
                                 if (effC & 0x8000) { // mmap i/o
                                         ushort mmaddr = effC & 0x7fff;
                                         switch(mmaddr) {
-                                        case 3: putchar(ALU2); fflush(stdout);
+                                        case 6: putchar(ALU2); fflush(stdout);
                                                 break; // UART out
                                         case 512: // halt
                                                 exit(0);

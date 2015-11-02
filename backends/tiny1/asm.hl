@@ -277,16 +277,12 @@ function tiny1_asm_compile(dbg, s, addr) {
 
 \subsection{Building a complete memory image}
 
-\pfcode{include "./encode.hl"}
+\pfcode{litinclude ("../../doc/tiny1encode") "./encode.hl"}
 
-\pfcode{#(force-class-flush)}
+\phcode{#(force-class-flush)}
 
 Static microcode:
-\pfcode{
-// TODO: relative path
-define static_microcode =
-  #(ctime
-     `(quote ,(tiny1_compile_file "./sw/microcode.s")))}
+\pfcode{litinclude ("../../doc/tiny1mucode") "./sw/microcode.s"}
 
 \pfcode{include "./mkmem.hl"}
 

@@ -1,7 +1,7 @@
    .align 8
    irq:
 
-       r1 = #0x8001
+       r1 = #0x8002
 //       r1 = [r1] // read and ignore
         
        r1 = 0
@@ -13,7 +13,7 @@
     main_loop_0:
        r4 = 33; r3 = 0x21; r5 = 1
        r9++
-       r1 = #0x8004
+       r1 = #0x8008
        r8 = r9
        [r1] = r8 // blink leds
     main_loop:
@@ -54,13 +54,13 @@
        push r2
        push r3
 
-       r2 = #0x8002 // uart ready addr
+       r2 = #0x8004 // uart ready addr
      putc_uart_wait:
        r3 = [r2]    // uart ready?
       if !r3 goto putc_uart_wait
        
 
-       r2 = #0x8003 // uart dout addr
+       r2 = #0x8006 // uart dout addr
        [r2] = r1    // r1 - argument
 
        r3 = pop

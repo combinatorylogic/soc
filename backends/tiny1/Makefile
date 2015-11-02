@@ -7,8 +7,8 @@ clean:
 	$(MAKE) -C hw/verilator clean
 
 -include asm.exe.d
-asm.exe: asm.hl sw/microcode.s
-	pfront /c asm asm.hl
+asm.exe: asm.hl top.hl sw/microcode.s
+	pfront /c asm top.hl
 
 sw/test.s.hex: sw/test.s asm.exe
 	mono ./asm.exe sw/test.s

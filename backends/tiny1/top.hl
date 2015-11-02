@@ -1,0 +1,1 @@
+litinclude ("../../doc/tiny1asm") "./asm.hl"

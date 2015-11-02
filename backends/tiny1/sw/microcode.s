@@ -1,6 +1,7 @@
-/*  Microcode entries. See encode.hl for the microassembler syntax.
- */  
-        
+\section{Tiny1 microcode}
+
+\pfcode{
+define static_microcode = .tiny1mucode:
         
 @PUSH:  // or pushrel
         B = #0x400
@@ -575,3 +576,6 @@
 
 @CUSTOM:              STOP                  
                   
+}
+
+%%%%%%%%%%%%%%%%%

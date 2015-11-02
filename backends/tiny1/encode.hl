@@ -288,16 +288,20 @@ function tiny1_muop_bitenc(mu) {
       }}}}
 
 \pfcode{
-function tiny1_compile_file(src)
-{ microcode = %peg:file->stream(src);
-  t = parse stream microcode as mucode;
-  // todo: if fail
-  tt = map t do tiny1_muop_compile(t);
+function tiny1_compile_mcode(src)
+{
+  tt = map src do tiny1_muop_compile(src);
  <[l2;tt2]> = tiny1_muop_labels(tt);
   tt3 = map append t in tt2 do tiny1_muop_bitenc(t);
   endof = length(tt3)*2+152;
   etabl = map l in l2 do 152+l*2;
   return [endof; etabl; tt3]
+}}
+
+\pfcode{
+syntax in expr, start (mucode): '"." tiny1mucode ":" [mucode]:c'
+{
+  'lisp'('quote'(tiny1_compile_mcode(c)))
 }}
 
 %%%%%%%%%%%

@@ -90,11 +90,11 @@ module tiny1_cpu(
    //  IO_UART_DOUT   - 8 bits to UART
 
    parameter IO_UART_VALID = 0;
-   parameter IO_UART_DIN = 1;
-   parameter IO_UART_READY = 2;
-   parameter IO_UART_DOUT = 3;
+   parameter IO_UART_DIN = 2;
+   parameter IO_UART_READY = 4;
+   parameter IO_UART_DOUT = 6;
 
-   parameter IO_LEDS = 4;
+   parameter IO_LEDS = 8;
    
    wire [10:0]          mmapaddr;
 
