@@ -1,7 +1,7 @@
-PFRONT := pfront
-MONO := mono
+PFRONT ?= pfront
+MONO ?= mono
 
-all: clikecc.exe
+all: clikecc.exe icetest
 
 -include clikecc.exe.d
 clikecc.exe: clike/CLikeSCore.dll
@@ -31,4 +31,11 @@ logipi:
 
 atlys:
 	$(MAKE) -C backends/small1/hw/soc/atlys
+
+
+icetest:
+	$(MAKE) -C backends/tiny1/ test
+
+ice:
+	$(MAKE) -C backends/tiny1/ ice
 

@@ -17,3 +17,5 @@ script:
   - make clikecc.exe
   - make hwtests
   - make hdltests
+  - make icetest
+
