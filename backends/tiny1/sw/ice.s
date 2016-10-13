@@ -2,7 +2,7 @@
    irq:
 
        r1 = #0x8002
-//       r1 = [r1] // read and ignore
+       r1 = [r1] // read and ignore
         
        r1 = 0
        goto <r1> // quit the IRQ handler
@@ -51,6 +51,7 @@
 
    .align 8
    putc:
+       ret
        push r2
        push r3
 

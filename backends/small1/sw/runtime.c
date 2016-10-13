@@ -38,8 +38,8 @@ int32 _custom2_1(int32 cmd, int32 x, int32 y);
 // Todo: implement it as a special instruction?
 int32 *__jumptable_clamp(int32 v, int32 l, int32 r)
 {
-  if (v>=l && v<=r) return v-l+1;
-  return 0;
+  if (v>=l && v<=r) return (int32 *)(v-l+1);
+  return (int32 *)0;
 }
 
 // Library functions
@@ -159,14 +159,14 @@ inline int32 _ISDIV(int32 a, int32 b)
 
 int32 _IUREM(int32 a, int32 b)
 {
-  uint32 rem;
+  int32 rem;
   _IDIVMOD(a, b, &rem);
   return rem;
 }
 
 int32 _ISREM(int32 a, int32 b)
 {
-  uint32 rem;
+  int32 rem;
   _IDIVMOD(a, b, &rem);
   return rem;
 }

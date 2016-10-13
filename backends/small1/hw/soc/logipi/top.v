@@ -80,6 +80,8 @@ module small1soc(
 `ifdef LOGIPI
                  input [1:0]   PB,
                  input [1:0]   SW,
+
+		 output D4, D2, D3, // HSYNC, VSYNC, MONO
 `else
                  input sys_reset,
 `endif
@@ -141,10 +143,12 @@ module small1soc(
 
      
    parameter test_frequency = 100_000_000 ;
+   parameter test_frequency_25mhz = 25_174_000 ;
    parameter test_frequency_mhz = test_frequency/1_000_000 ;
    parameter freq_multiplier = 16 ;
 `ifdef LOGIPI
    parameter freq_divider = (freq_multiplier*50_000_000)/test_frequency ;
+   parameter freq_divider25mhz = (freq_multiplier*50_000_000)/test_frequency_25mhz ;
 `else
    parameter freq_divider = (freq_multiplier*100_000_000)/test_frequency ;
 `endif
@@ -189,6 +193,28 @@ module small1soc(
 
 `ifdef ATLYS
    BUFG BUFG1 (.O(clk100mhz), .I(sys_clk_in));
+`endif
+
+
+`ifdef LOGIPI
+   wire [12:0]			  vmem_in_addr;
+   wire [7:0] 			  vmem_in_data;
+   reg 				  vmem_we;
+   wire                           clku25mhz;
+   wire                           clk25mhz;
+   
+   
+   vgatop vga1(.clk(clk100mhz),
+	       .rst(cpu_reset),
+	       .clk25mhz(clk25mhz),
+
+	       .hsync(D4),
+	       .vsync(D2),
+	       .rgb(D3),
+
+	       .vmem_in_addr(vmem_in_addr),
+	       .vmem_in_data(vmem_in_data),
+	       .vmem_we(vmem_we));
 `endif
 
 `ifndef BLOCKRAM
@@ -237,7 +263,7 @@ module small1soc(
               // CLKOUT0_DIVIDE - CLKOUT5_DIVIDE: Divide amount for CLKOUT# clock output (1-128)
               .CLKOUT0_DIVIDE(freq_divider),
               .CLKOUT1_DIVIDE(freq_divider),
-              .CLKOUT2_DIVIDE(1),
+              .CLKOUT2_DIVIDE(1/*freq_divider25mhz*/),
               .CLKOUT3_DIVIDE(1),
               .CLKOUT4_DIVIDE(1),
               .CLKOUT5_DIVIDE(1),
@@ -265,7 +291,7 @@ module small1soc(
                       .CLKFBOUT(clkfb), // 1-bit output: PLL_BASE feedback output
                       // CLKOUT0 - CLKOUT5: 1-bit (each) output: Clock outputs
                       .CLKOUT0(clku),   //  CLKOUT1 => open,
-                      .CLKOUT2(),   //   CLKOUT3 => open,
+                      .CLKOUT2(/*clku25mhz*/),   //   CLKOUT3 => open,
                       .CLKOUT4(),   //   CLKOUT5 => open,
                       .LOCKED(),  // 1-bit output: PLL_BASE lock status output
                       .CLKFBIN(clkfb), // 1-bit input: Feedback clock input
@@ -275,6 +301,15 @@ module small1soc(
 
    BUFG BUFG1 (.O(clkb), .I(OSC_FPGA));
    BUFG BUFG3 (.O(clk100mhz), .I(clku));
+
+   reg [1:0]                      clkctr;
+   assign clku25mhz = clkctr==2'b0;
+   
+   always @(posedge clk100mhz)
+     clkctr <= clkctr + 1;
+   
+   
+   BUFG BUFG4 (.O(clk25mhz), .I(clku25mhz));
 `endif //  `ifdef FPGA
 `endif
 
@@ -505,7 +540,12 @@ module small1soc(
    
 
    reg                            cpu_release_reset;
-   
+
+
+`ifdef LOGIPI
+   assign vmem_in_data = membus_data_out[7:0];
+   assign vmem_in_addr = membus_data_out[21:8];
+`endif
    
    always @(posedge clk100mhz)
      begin
@@ -524,6 +564,10 @@ module small1soc(
            mem_acc_irq <= 0;
 
 	   FAILED_ADDR <= 0;
+
+`ifdef LOGIPI
+	   vmem_we <= 0;
+`endif
            
 `ifdef SIMULATION
            FINISH <= 0;
@@ -595,6 +639,13 @@ module small1soc(
                               mem_state <= MEM_WAIT_WR0; // wait for CPU to release the write signal
                            end else mem_state <= MEM_IDLE; // keep trying
                         end // case: 32'h10004
+`ifdef LOGIPI
+			32'h10010: begin
+			   vmem_we <= 1;
+                           membus_data_wr_ack <= 1;
+			   mem_state <= MEM_WAIT_WR0;
+			end
+`endif
 `ifdef SIMULATION
                         32'h10111: begin
                            FINISH <= 1;
@@ -669,6 +720,9 @@ module small1soc(
              end
              MEM_WAIT_WR0: begin
                 mem_enable <= 0;
+`ifdef LOGIPI
+		vmem_we <= 0; // if writing vmem
+`endif
                 uart_out_data_in_wr <= 0; // release (TODO: separate always block?)
                 if (!membus_data_wr) begin
                    mem_state <= MEM_IDLE;

@@ -32,6 +32,8 @@
    parameter ALU_GEQ = 12;
 `endif
    parameter ALU_ASHR = 13;
+   parameter ALU_SELECT = 14;
+
    
    // Branch
    parameter BR_JMP = 0;
@@ -73,6 +75,8 @@
    parameter PUSHCOUNTER = 13;
 
    parameter CUSTOMOP = 14;
+
+   parameter SETCND = 15;
 
    // FPRead
    parameter READFP = 0;

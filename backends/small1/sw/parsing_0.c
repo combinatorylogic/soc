@@ -127,7 +127,7 @@ void parsechar_w(pcontext *ctx, void *env, int *res)
   int chr = _ptrint(env);
   *res = parsechar(ctx, chr);
 }
-parsefunptr *mkparsechar(int chr)
+parsefun *mkparsechar(int chr)
 {
   parsefun *fn = (parsefun *)malloc(sizeof(parsefun));
   fn -> fn = &parsechar_w;
@@ -151,7 +151,7 @@ void parserange_w(pcontext *ctx, void *env, int *res) {
   rangeenv *penv = (rangeenv*)env;
   *res = parserange(ctx, penv->from, penv->to);
 };
-parsefunptr *mkparserange(int from, int to)
+parsefun *mkparserange(int from, int to)
 {
   parsefun *fn = (parsefun *)malloc(sizeof(parsefun));
   fn -> fn = &parserange_w;

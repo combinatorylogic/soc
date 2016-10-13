@@ -96,6 +96,8 @@ module toycpu_core(
    parameter S_EXEC_IMUL4 = 16;
 
    parameter S_CUSTOMWAIT = 17;
+   parameter S_STACKMAPREAD0 = 18;
+   
    
 `include "opcodes.v"
  
@@ -105,6 +107,9 @@ module toycpu_core(
    reg [31:0]               SP;
    reg [31:0]               FP;
    reg [31:0]               FPREL;
+   reg                      CND;
+                      
+   
    reg                      CARRY;
 
    // Shadow registers for IRQ handling
@@ -218,6 +223,7 @@ module toycpu_core(
                         (opcode == ALU_ASHR
                          || opcode == ALU_SHR)? 
                         {(opcode==ALU_ASHR?operand_a[31]:1'b0),operand_a[31:1]}:
+                        (opcode == ALU_SELECT)?(CND?operand_b:operand_a):
                         operand_a);
 
    // PCU
@@ -508,7 +514,7 @@ module toycpu_core(
                      if ((stack_data_a & 32'hffff0000) == 0) begin
                         mapped_stack <= 1;
                         mapped_stack_addr <= stack_data_a;
-                        state <= S_STACKMAPREAD;
+                        state <= S_STACKMAPREAD0;
                      end else begin
                         memop_counter <= memop_counter + 1;
                         state <= S_MEMREAD_WAIT;
@@ -557,6 +563,7 @@ module toycpu_core(
                                || opcode == SETFPREL
                                || opcode == SETPC
                                || opcode == SETPCSP
+                               || opcode == SETCND
                                || opcode == POP) begin
                               SP <= SP - 1;
                            end
@@ -571,9 +578,12 @@ module toycpu_core(
                                    (immed == 1)?instr_counter:
                                    (immed == 2)?memop_counter:0):
                                   stack_data_a;
+
                         if (opcode == SETSP) SP <= stack_data_a;
                         if (opcode == SETFP) 
                           FP <= stack_data_a;
+                        if (opcode == SETCND)
+                          CND <= stack_data_a[0];
                         
                         if (opcode == SETFPREL) 
                           FPREL <= stack_data_a;
@@ -639,6 +649,10 @@ module toycpu_core(
                 do_writeback <= 1;
              end
 `endif
+             S_STACKMAPREAD0: begin
+                state <= S_STACKMAPREAD;
+                mapped_stack <= 0;
+             end
              S_STACKMAPREAD: begin
                 result <= stack_data_a;
                 mapped_stack <= 0;

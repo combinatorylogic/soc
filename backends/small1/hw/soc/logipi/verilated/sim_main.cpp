@@ -63,7 +63,7 @@ void queue_to(unsigned int msg)
   to_small1_m.lock();
   if (to_small1_ready) {
     to_small1_m.unlock();
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::microseconds(50));
     goto poll;
   }
   to_small1 = msg;
@@ -90,7 +90,7 @@ unsigned int wait_from()
 {
   unsigned int ret;
   while(!queued_from(&ret))
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::microseconds(50));
   return ret;
 }
 
@@ -100,7 +100,7 @@ void queue_from(unsigned int msg)
   from_small1_m.lock();
   if (from_small1_ready) {
     from_small1_m.unlock();
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::microseconds(50));
     goto poll;
   }
   from_small1 = msg;
@@ -283,11 +283,11 @@ int main(int argc, char **argv, char **env) {
   unsigned long long brk;
   
   while(1) {
-    if (sim_clock%4==0) {
+    if (sim_clock%2==0) {
       top->clk100mhz = 1; sys_clock++;
-    } else if (sim_clock%4==2) top->clk100mhz = 0;
+    } else if (sim_clock%2==1) top->clk100mhz = 0;
 
-    if ((sim_clock%4 == 1) && (sys_clock%50==0)) { // Exec SPI action
+    if ((sim_clock%2 == 1) && (sys_clock%8 == 1)) { // Exec SPI action
       switch(SPI_state) {
       case SPI_IDLE: {  // Initiate next word
         // N.B., this is not very faithful to how a Linux SPI driver is doing things,
@@ -346,11 +346,11 @@ int main(int argc, char **argv, char **env) {
 
   // Start SPI communication loop
   while(!top->FINISH) {
-    if (sim_clock%4==0) {
+    if (sim_clock%2==0) {
       top->clk100mhz = 1; sys_clock++;
-    } else if (sim_clock%4==2) top->clk100mhz = 0;
+    } else if (sim_clock%2==1) top->clk100mhz = 0;
 
-    if ((sim_clock%4 == 1) && (sys_clock%50==0)) { // Exec SPI action
+    if ((sim_clock%2 == 1) && (sys_clock%8==1)) { // Exec SPI action
       switch(SPI_state) {
       case SPI_IDLE: {  // Initiate next word
         unsigned int comm = 0;

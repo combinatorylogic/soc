@@ -1,6 +1,8 @@
 #include "runtime.c"
 #include "malloc.c"
 
+#include "vga.c"
+
 int32 num_A = 5766228;
 int32 num_B = 13;
 
@@ -28,8 +30,10 @@ void bootentry()
   tmpbuf = malloc(128);
   osbuffer = malloc(512);
 
+
   _print("Small1 OS REPL\n");
 
+  initvga();
   // Event loop
  eventloop:
   cntflag = 0;

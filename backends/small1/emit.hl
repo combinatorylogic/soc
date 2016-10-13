@@ -78,6 +78,7 @@ ast ir3tree {
       // High level return ABI handling
     | ret(irexpr:e)
     | retv()
+    | select(irexpr:vif, irexpr:vthen, irexpr:velse)
 
       // High level assembler: constants may be either immediates
       //   or lifted into the external memory
@@ -433,6 +434,7 @@ function small1_tree_lowering_fun_3(fn, fnnm, rettp, args, body, liftglobal)
           liftglobal('global'(gnm, length(data), data));
           return 'globptr'(gnm)
        }
+     | select -> 'select'(vif([],[]), vthen([],[]), velse([],[]))
      | else -> 'other'(node) // ccerror('CCSMALL1:ILLEGALINSTR'(node))
      };
      deep irbblock {
@@ -464,7 +466,7 @@ function small1_tree_lowering_fun_3(fn, fnnm, rettp, args, body, liftglobal)
                  'loadvar'(pos)
               } else if (kind === 'store') {
                  'storevar'(pos, sval)
-              } else if (kind === 'gep') dogep(pos, sval, 'stack')
+              } else if (kind === 'gep') dogep('loadptr'(pos), sval, 'stack')
               else ccerror('CCSMALL1:WTFKIND'(kind))
            } else { // a global
               if (not(kind)) { // loading a global pointer
@@ -557,11 +559,18 @@ function small1_tree_lowering_post(mdl) {
         | else -> []
         }
      };
+  isconstant(n) =
+     visit:ir3tree(irexpr:n) {
+       once irexpr {
+          const -> v
+        | else -> []}};
   visit:ir3tree(irmodule:mdl) {
      deep irexpr {
         addrmul -> {
           if (n==1) idx
-          else if (n==2) {
+          else aif (chk = isconstant(idx)) {
+             'const'(chk * n)
+          } else if (n==2) {
              'unary'('SHL', idx)
           } else if (n==4) {
              'unary'('SHL','unary'('SHL',idx))
@@ -675,7 +684,7 @@ function small1_emit_expr(env, e, liftglob)
                   'WRITEFP'('n'(-1))  // Store it in the reserved slot
                   ];
     voidfun(fp) = {
-       visit:ir2(irtype: ll_env_fun_retval(env, [], fp)) {
+       visit:ir2(irtype: ll_env_fun_retval(env, fp)) {
          once irtype {
             void -> true
           | else -> []}}};
@@ -726,7 +735,7 @@ function small1_emit_expr(env, e, liftglob)
               };
              ['PUSHL'('n'(lv)); 'PUSHH'('n'(hv))]
            } else if (v<0) ['PUSHSE'('n'(v))] else ['PUSH'('n'(v))]
-         } else ['comment'(node)] //TODO!
+         } else {writeline('CONSTFAIL!!!'(node)); ['comment'(node)]} //TODO!
        | globptr -> ['PUSH'('a'('lbl'(ptr)))]
        | loadptr -> ['PUSHFP'(); 'PUSH'('n'(ptr)); 'ALU_ADD'()]
        | jumptable -> symbols(tblnm) {
@@ -734,7 +743,8 @@ function small1_emit_expr(env, e, liftglob)
                             map v in vs do 'addrexpr'('SUB', 'lbl'(v), 'lbl'(lbl))));
             ['PUSH'('a'('lbl'(tblnm)))]
          }
-       | else -> ['comment'(node)] // report an error?          
+       | select -> [@vthen; @velse; @vif; 'SETCND'(); 'ALU_SELECT'()]
+       | else -> {writeline('INSTRFAIL!!!'(node)); ['comment'(node)]} // report an error?          
       };
       deep irbblock {
          bb -> ['LABEL'(lbl);

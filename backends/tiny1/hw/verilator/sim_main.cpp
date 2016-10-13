@@ -43,7 +43,7 @@ int main(int argc, char **argv, char **env) {
 	top->rst = 0;                  // reset button pressed
 	
 	for (n = 0; n < size; n++) {
-		top->v__DOT__ram__DOT__RAM[n] = buf[n];
+		top->tiny1_soc__DOT__ram__DOT__RAM[n] = buf[n];
 	}
 	
 	// Warm up in reset

@@ -85,6 +85,7 @@ ast small1asm {
    | ALU_LEQ(immediate:v)
    | ALU_GE(immediate:v)
    | ALU_GEQ(immediate:v)
+   | ALU_SELECT()
 
    // Intermediate instructions, do not directly map to
    //   any opcodes.
@@ -120,6 +121,7 @@ ast small1asm {
    | PUSHCOUNTER(immediate:v)
 
    | CUSTOMOP(immediate:v)
+   | SETCND()
 
    // Aux
    | DUP()
@@ -159,6 +161,7 @@ function small1asm_instr_opclass(inst_tag)
    | ALU_LEQ
    | ALU_GE
    | ALU_GEQ
+   | ALU_SELECT
    | ALU_NOT -> 0 // IC_ALU
    
    | BR_JMP
@@ -187,6 +190,7 @@ function small1asm_instr_opclass(inst_tag)
    | SETPCSP
    | DUP
    | POP
+   | SETCND
    | SETCRITICAL
    | LIFTCRITICAL -> 7 // IC_STACK
 
@@ -216,7 +220,8 @@ function small1asm_instr_code(inst_tag)
    | ALU_GE -> 11
    | ALU_GEQ -> 12
    | ALU_ASHR -> 13
-   | ALU_EQ  -> 7 // IC_ALU
+   | ALU_EQ  -> 7
+   | ALU_SELECT -> 14 // IC_ALU
    
    | BR_JMP  -> 0
    | BR_JMPR -> 1
@@ -245,6 +250,7 @@ function small1asm_instr_code(inst_tag)
    | DUP    -> 7
    | POP    -> 8
    | SETCRITICAL -> 9
+   | SETCND -> 15
    | LIFTCRITICAL -> 10 // IC_STACK
 
    | READFP ->0

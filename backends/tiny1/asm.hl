@@ -339,29 +339,4 @@ function tiny1_asm_frontend(fo, dbgfo, memfo, src) {
        fprintln(memfo, m);
 }}
 
-\pfcode{
-function main() {
-try {
-  try {
-    cmd = %a->l( %*CMDLINE* );
-    match cmd with
-      [srcnm] -> {
-        dbgnm = %S<<(srcnm, ".dbg");
-        hexnm = %S<<(srcnm, ".hex");
-        memnm = %S<<(srcnm, ".v");
-        %call-with-output-file(dbgnm,
-          fun(dbgfo)
-            %call-with-output-file(hexnm,
-              fun(fo)
-                %call-with-output-file(memnm,
-                   fun(memfo) tiny1_asm_frontend(fo, dbgfo, memfo, srcnm))))}
-   | else -> println("Usage: asm <file.s>")}
-  catch (t_MBaseException e) {
-    writeline(mbaseerror(e));
-    println(%->s(e))
-  }}
-  catch (t_Exception e) {
-    println(%->s(e))
-  }}}
-
 %%%%%%%%%%

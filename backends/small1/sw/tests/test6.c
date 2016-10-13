@@ -2,18 +2,10 @@
 #include "../malloc.c"
 #include "../parsing_0.c"
 
-int32 tmp[128];
 void _printnum(int32 *str, int32 v)
 {
+  int32 tmp[64];
   itoa(v,tmp);
-  _print(str);
-  _print(tmp);
-  _print("\n");
-}
-void _printpos(int32 *str, int32 *ptr)
-{
-  int32 p = _ptrint(ptr);
-  itoah(p,tmp);
   _print(str);
   _print(tmp);
   _print("\n");

@@ -1,15 +1,14 @@
 #include "../runtime.c"
 
-int32 tmp[128];
 void _printnum(int32 *str, int32 v)
 {
+  int32 tmp[32];
   itoa(v,tmp);
   _print(str);
   _print(tmp);
   _print("\n");
 }
 
-int32 tst[3];
 
 inline int tstswitch(int x) {
   switch(x) {
@@ -26,6 +25,7 @@ inline int tstswitch(int x) {
 void bootentry()
 {
   int i;
+  int32 tst[3];
   tst[0] = 1;
   tst[1] = 3;
   tst[2] = 4;

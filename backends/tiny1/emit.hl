@@ -6,19 +6,27 @@
 
 \pfcode{
 ast tiny1asm_ir : tiny1asm ( reg -> oreg) {
-
-  reg = vreg(ident:id) | vimmed(number:v) | reg(oreg:r);
-
+  reg = vreg(ident:id) | vimmed(number:v) | reg(oreg:r) | vconstarray(any:v);
 }}
 
-\pxxxfcode{
+\pfcode{
+function tiny1_lower_call(dst, args) {
+  
+}}
+
+\pfcode{
 function tiny1_lower_to_vregs(bb) {
    visit:ir2 (irbblock: bb) {
       deep irpair: e(nm);
       deep irexpr (dstnm) {
-         load -> 'load'(mkreg(dstnm), ptr, 'vimmed'(0))
-       | store -> 'store'(e, ptr, 'vimmed'(0))
-       
+         load -> ['load'(mkreg(dstnm), ptr, 'vimmed'(0))]
+       | store -> ['store'(e, ptr, 'vimmed'(0))]
+       | binary -> ['binop'(tiny1_lower_binop(op), mkreg(dstnm), l, r)]
+       | string -> ['longimmed'(mkreg(dstnm), 'vconstarray'(s))]
+       | alloca -> ['alloca'(dstnm, tiny1_type_size(t))]
+       | call -> tiny1_lower_call('label'(fn), args)
+       | callptr -> tiny1_lower_call('ref'(fn), args)
+       | else -> []
       }
    }
 }}

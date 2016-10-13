@@ -364,7 +364,8 @@ module mand_core (input clk,
              iterations <= 0;
              ack <= 0;
              reissues <= 0;
-          end
+          end else ack <= 0; // if (rq)
+          
           S_ISSUE: begin
              i_thrid <= i_thrid + 1; 
              cx <= cx + cxstep;

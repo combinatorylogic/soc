@@ -1,10 +1,10 @@
 #include "../runtime.c"
 #include "../malloc.c"
 
-int32 tmp[128];
 
 void _printpos(int32 *str, int32 *ptr)
 {
+  int32 tmp[32];
   int32 p = _ptrint(ptr) - _ptrint(_data);
   itoah(p,tmp);
   _print(str);

@@ -1,6 +1,5 @@
 #include "../runtime.c"
 
-int32 tmp[128];
 
 typedef ::fun void(int32, int32, int32 *) myfunptr;
 
@@ -14,6 +13,7 @@ int32 exec(myfunptr *f, int32 a, int32 b)
 
 void _printnum(int32 *str, int32 v)
 {
+  int32 tmp[32];
   itoa(v,tmp);
   _print(str);
   _print(tmp);

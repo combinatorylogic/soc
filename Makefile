@@ -4,12 +4,16 @@ MONO ?= mono
 all: clikecc.exe icetest
 
 -include clikecc.exe.d
-clikecc.exe: clike/CLikeSCore.dll
-	cp clike/CLikeSCore.dll ./
+clikecc.exe: CLikeSCore.dll
+	$(MAKE) -C clike CLikeSCore.dll
 	$(PFRONT) /c clikecc ./cc.hl
 
-clike/CLikeSCore.dll:
+
+-include clike/CLikeSCore.dll.d
+CLikeSCore.dll:
 	$(MAKE) -C clike CLikeSCore.dll
+	cp clike/CLikeSCore.dll ./
+
 
 simx: backends/small1/hw/soc/logipi/verilated/obj_dir/simx
 
