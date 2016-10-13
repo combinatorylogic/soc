@@ -61,7 +61,7 @@ function main()
 collector(fadd,fget) {
  %read-int-eval(#'(n.module clikeccrepl dll));
  mname = mkref("test");
- %llvm-optimise := true;
+ %llvm-optimise := [];
  ir2backend_hook := ir2backend_small1;
  do loop(a = %a->l( %*CMDLINE* )) {
     match a with

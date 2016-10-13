@@ -315,7 +315,6 @@ void itoah(int32 n0, int32 s[]) {
 void _testhalt()
 {
   _printchr(0xff); // signal verilator harness to quit
-  _print("--\n");
   while(!bufferptr) ; // wait for any input
   _HALT();
 }
