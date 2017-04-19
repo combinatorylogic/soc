@@ -1,5 +1,8 @@
 `include "custom_include.v"
 `include "defs.v"
+`ifdef CORE_DEBUG
+ `define DEBUG
+`endif
 
 module toycpu_core(
               input             clk, // clock
@@ -34,7 +37,16 @@ module toycpu_core(
               input             debug,
               input             step,
               output reg        step_ack,
-              input             stall
+              input             stall,
+
+
+              // Stack
+              output [31:0]     stack_real_addr_a,
+              output [31:0]     stack_real_addr_b,
+              output            stack_wr_a,
+              output [31:0]     stack_datain_a,
+              input [31:0]      stack_data_a,
+              input [31:0]      stack_data_b
               );
 
    parameter STACK_MAX = `RAM_DEPTH-1; // see above
@@ -150,12 +162,7 @@ module toycpu_core(
 `endif
  // Wires connecting to the stack ports
    wire [31:0]              stack_addr_a;
-   wire [31:0]              stack_data_a;
-   wire [31:0]              stack_datain_a;
-   wire                     stack_wr_a;
-
    wire [31:0]              stack_addr_b;
-   wire [31:0]              stack_data_b;
 
    //// Instruction decode logic
    wire [2:0]               instr_class;
@@ -250,9 +257,6 @@ module toycpu_core(
                           || (opcode == BR_JMPC) || (opcode == BR_JMPRC));
 
 
-   wire [31:0]              stack_real_addr_a;
-   wire [31:0]              stack_real_addr_b;
-   
    assign stack_real_addr_a = inIRQ?(STACK_MAX - stack_addr_a):stack_addr_a;
    assign stack_real_addr_b = inIRQ?(STACK_MAX - stack_addr_b):stack_addr_b;
 
@@ -260,16 +264,8 @@ module toycpu_core(
    reg [31:0]               mapped_stack_addr;
  
    // Stack is a 2-read 1-write port ram
-   toyblockram stack ( .clk(clk),
-                       
-                       .addr_a(stack_real_addr_a),
-                       .data_a(stack_data_a),
-                       .datain_a(stack_datain_a),
-                       .wr_a(stack_wr_a),
-
-                       .addr_b(stack_real_addr_b),
-                       .data_b(stack_data_b)
-                       );
+   /*
+    */
    // Combinational logic for the stack ports.
    // This is one of the slowest paths, consider splitting.
    assign stack_wr_a = (state == S_IFETCH) && (do_writeback||do_writeback_fp);
@@ -297,6 +293,8 @@ module toycpu_core(
    reg [31:0]               LAST_POP2;
    reg [31:0]               LAST_INSTR;
 
+   reg                      dbgenable;
+   
    // Placeholder for the custom hoisted logic
    `include "custom_hoisted.v"
     
@@ -309,6 +307,9 @@ module toycpu_core(
            SP <= 32'h0;       // flush stack
            FP <= 32'h0;
            FPREL <= 0;
+
+           dbgenable <= 0;
+           
 
            LAST_BRANCH <= 0;
            
@@ -451,11 +452,13 @@ module toycpu_core(
              S_DECODE: begin // Decode an instruction, 
                 // fetch stack arguments, write immediate to stack, evaluate next PC, etc.
            `ifdef DEBUG
+                if (dbgenable) begin
                 $display ("INSTR=%X [%X]", instr, PC);
                 $display ("SP=%X FP=%X", SP, FP);
                 $display ("STK=%X, %X", stack_data_a, stack_data_b);
+                end
            `endif
-
+                
                 // Perf. counter:
                 instr_counter <= instr_counter + 1;
 
@@ -469,6 +472,23 @@ module toycpu_core(
                      // stack port reads should have been initiated by combinational logic
                      operand_a <= stack_data_a;
                      operand_b <= stack_data_b;
+                     
+           `ifdef DEBUG
+                     if (opcode == ALU_DBG) begin
+                        if (stack_data_b > 1 && stack_data_b < 999)
+                          $display("DEBUG[%d]=%d", stack_data_b, stack_data_a);
+                        else
+                          if (stack_data_b == 0)
+                            $write("%c", stack_data_a[7:0]);
+                          else if (stack_data_b == 1) begin
+                             $display("Registers: PC=%x, SP=%x, FP=%x", PC, SP, FP);
+                          end
+                                                      
+                        
+                        if (stack_data_b == 999) dbgenable <= stack_data_a[0];
+                     end
+           `endif
+                     
                      // decrement stack pointer:
                      SP <= (opcode == ALU_NOT || opcode == ALU_SHR || opcode == ALU_ASHR
                             || opcode == ALU_SHL)?SP-1:SP - 2;
@@ -616,7 +636,9 @@ module toycpu_core(
                    state <= S_IFETCH;
                 end else begin // if (opcode == BR_IRQACK)
                    `ifdef DEBUG
-                   $display ("BRANCH_PC(%X) = %X -- %X [%X]", operand_a, PC, branch_PC, SP);
+                   if (dbgenable) begin
+                      $display ("BRANCH_PC(%X) = %X -- %X [%X]", operand_a, PC, branch_PC, SP);
+                   end
                    `endif
                    
                    // Calculate the next PC
@@ -634,7 +656,9 @@ module toycpu_core(
                 result <= alu_result[31:0]; // done by combinational logic
                 CARRY  <= alu_result[32];
                 `ifdef DEBUG
-                $display("ALU_RESULT = %x", alu_result);
+                if (dbgenable) begin
+                   $display("ALU_RESULT = %x", alu_result);
+                end
                 `endif
              end
 `ifdef ENABLE_IMUL

@@ -14,6 +14,13 @@ module tiny1_core(
                   output        mem_wr,
                   output        mem_rd);
 
+   parameter FSM_FETCH_ISRC = 0;   // macro instruction fetch mode
+   parameter FSM_FETCH_MPC  = 1;   // microcode address table lookup
+   parameter FSM_FETCH_MUOP = 2;   // micro instruction fetch mode
+   parameter FSM_EXEC_MUOP  = 3;   // micro instruction execution
+   parameter FSM_MPC_FINISH = 4;
+   
+   
    // Memory map:
    // 0 -  31: slots for vregs
    // 32 - 63: IRQ mode vregs
@@ -117,6 +124,8 @@ module tiny1_core(
 
    // ALU2 holds the ALU result
    wire [15:0]                  ALU2;
+   reg                          ALU2Z;
+   
    assign ALU2 = (SH==0)?ALU1:
                  (SH==1)?ALU1<<1:
                  (SH==2)?ALU1>>1:
@@ -125,6 +134,7 @@ module tiny1_core(
    // Computing the next microcode PC (should not really be 16bits)
    wire [15:0]                  MPCdelta;
    wire [15:0]                  ExtSIMMED;
+   
 
    assign ExtSIMMED = (SIMMED[5]==1)?{9'h1ff, SIMMED[5:0], 1'b0}:
                       /* else */     {9'h0, SIMMED[5:0], 1'b0};
@@ -134,27 +144,16 @@ module tiny1_core(
    assign MPCdeltaDefault = longconst?4:2;
    
    assign MPCdelta = (CN==0)?MPCdeltaDefault:
-                     (CN==1)?((ALU2==0)?ExtSIMMED:MPCdeltaDefault):
-                     (CN==2)?((ALU2==0)?MPCdeltaDefault:ExtSIMMED):
+                     (CN==1)?((ALU2Z)?ExtSIMMED:MPCdeltaDefault):
+                     (CN==2)?((ALU2Z)?MPCdeltaDefault:ExtSIMMED):
                              ExtSIMMED;
 
-   wire [15:0] 			newMPC;
-
-   assign newMPC = MPC + MPCdelta;  // TODO: reuse the other adder, 
-                                    //       add in two cycles instead
-   
-   
    // Memory write
    assign mem_data_o = ALU2;
    
    // Main FSM loop
-   reg [1:0]                    cpu_state;
+   reg [2:0]                    cpu_state;
 
-   parameter FSM_FETCH_ISRC = 0;   // macro instruction fetch mode
-   parameter FSM_FETCH_MPC  = 1;   // microcode address table lookup
-   parameter FSM_FETCH_MUOP = 2;   // micro instruction fetch mode
-   parameter FSM_EXEC_MUOP  = 3;   // micro instruction execution
-   
    
    always @(posedge clk)
      if (!rst) begin
@@ -172,7 +171,7 @@ module tiny1_core(
         CR <= 0;
 
         MuOP <= 0;
-        
+        ALU2Z <= 0;
 
      end else begin
         case (cpu_state)
@@ -228,14 +227,18 @@ module tiny1_core(
 
                    CR <= CR0;
                 end
-                MPC <= newMPC;
-                // Jumping with 0 offset is a special case, forcing a return to the macro
-                //   instruction mode.
-                if (MPCdelta == 0) begin
-                   cpu_state <= FSM_FETCH_ISRC;
-                end else begin
-                   cpu_state <= FSM_FETCH_MUOP;
-                end
+                ALU2Z <= ALU2==0;
+                cpu_state <= FSM_MPC_FINISH;
+             end // else: !if(MM == 1 && !afterRead)
+          end
+          FSM_MPC_FINISH: begin
+             MPC <= MPC + MPCdelta;
+             // Jumping with 0 offset is a special case, forcing a return to the macro
+             //   instruction mode.
+             if (MPCdelta == 0) begin
+                cpu_state <= FSM_FETCH_ISRC;
+             end else begin
+                cpu_state <= FSM_FETCH_MUOP;
              end
           end
         endcase

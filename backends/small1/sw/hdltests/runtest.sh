@@ -1,13 +1,9 @@
 #!/bin/bash
 set -e
 
-rm -f *.hex *.tst
-
-for f in *.c
-do
+f=$*
     make $f.hex
     out="_out"
     cp $f$out/*.v ../../hw/custom/
     (cd ../../hw/soc/logipi/verilated/; make clean; make exe)
     make $f.tst
-done

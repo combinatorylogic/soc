@@ -1,0 +1,189 @@
+% literate:
+
+\section{Verilog backend}
+
+\pfcode{
+function ll_to_hls3_lower_selectchains(top) {
+   visit:hls3 /rec/ (top: top) {
+      deep selectelt { e -> [c;v] };
+      deep expr {
+         selectchain -> do loop(e = es) {
+            match e with
+              [[cnd;vl]] -> mk:v(vl)
+            | [[cnd;vl];@rest] -> mk:select(cnd, vl, mk:e(loop(rest)))}
+       | else -> node()}}}}
+
+\pfcode{
+function ll_to_hls_hls3_to_verilog(top0) {
+   top = ll_to_hls3_lower_selectchains(top0);
+   s(x) = %S<<(x);
+   classop(op) = {
+      match op with
+         'Add' -> 'binop':"+"
+       | 'Sub' -> 'binop':"-"
+       | 'NOT' -> 'unop':"!"
+       | 'Shl' -> 'binop':"<<"
+       | 'AShr' -> 'binop':">>"
+       | 'LShr' -> 'binop':">>"
+       | 'EQ' -> 'binop':"=="
+       | 'NE' -> 'binop':"!="
+       | 'SGE' -> 'sbinop':">="
+       | 'SLT' -> 'sbinop':"<"
+       | 'SLE' -> 'sbinop':"<="
+       | 'And' -> 'binop':"&"
+       | else -> 'nope':""
+   };
+   mkop(op, args, t) = {
+      <cls:sym> = classop(op);
+       match cls with
+          'binop' -> ["(";car(args); ")"; sym; "(";cadr(args); ")"]
+        | 'sbinop' -> ["$signed(";car(args); ")"; sym; "$signed(";cadr(args); ")"]
+        | 'unop' -> [sym; "("; car(args); ")"]
+        | 'conv' -> car(args)
+        | else -> [s(op); "(...)"]
+   };
+   visit:hls3 /rec/ (top: top) {
+      deep modarg {
+         ain -> ["input "; tp; " "; s(nm)]
+       | aout -> ["output "; tp; " "; s(nm)]};
+      deep modentry {
+         register -> ["reg "; t; " "; s(nm); ";"; 'FORCECR']
+       | wire -> ["wire ";t; " "; s(nm); ";"; 'FORCECR']
+       | always -> ["always @(posedge clk)"; 'PUSHTAB'; 'FORCECR';
+                         s;
+                         'POP';
+                         'FORCECR']
+       | assign -> ["assign "; s(nm); " = "; 'PUSHTAB'; v; 'POP'; ";"; 'FORCECR']
+       | ram -> ['FORCECR';
+                 "hlsblockram "; "#("; 'PUSHSTOP';
+                                       ".BITWIDTH("; s(w); "),";'FORCECR';
+                                       ".SIZE("; s(size); ")"; 'POP';") ";
+                 s(id); " (";'PUSHSTOP';
+                 ".clk(clk),";'FORCECR';
+                 ".readaddr1(";readaddr1;"),";'FORCECR';
+                 ".readout1("; readout1; "),";'FORCECR';
+                 ".writeaddr1("; writeaddr1; "),";'FORCECR';
+                 ".writein1("; writein1; "),";'FORCECR';
+                 ".we("; we; ")";'POP';");"; 'FORCECR']
+       | else -> [] // TODO!
+      };
+      deep case {
+         d -> [v; ": "; 'PUSHSTOP'; s; 'POP']};
+      deep stmt {
+         if -> ["if ("; 'PUSHSTOP'; e; 'POP'; ")"; 'PUSHTAB'; 'FORCECR';
+                    tr; 'FORCECR';
+                 'TABBACK';"else"; 'FORCECR';
+                    fl; 'POP'; 'FORCECR']
+       | set -> [s(reg); " <= "; v; ";"; 'FORCECR']
+       | switch -> ["case ("; id; ")"; 'PUSHTAB'; 'FORCECR';
+                       interleave(cs, ['FORCECR']);
+                     'POP'; 'FORCECR'; "endcase"; 'FORCECR']
+       | begin -> if(ss) ["begin"; 'PUSHTAB'; 'FORCECR'; interleave(ss, ['FORCECR']); 'POP'; 'FORCECR';
+                          "end"] else []
+       | store -> ["/* STORE "; s(mem); "["; idx; "]="; v; " */"]
+       | load_start -> ["/* LOAD_START "; s(mem); "["; off; "] */"]
+       | nop -> []
+       | else -> "..." };
+      deep expr {
+         v -> v
+       | op -> mkop(fn, args, [])
+       | convop -> mkop(fn, args, t)
+       | select -> ["("; cnd; ")?"; "(";tr;"):("; fl;")"]
+       | selectchain -> ccerror('IMPOSSIBLE'())
+       | load_commit -> ["/* LOAD_COMMIT "; s(mem); ", "; s(reg); " */"]
+       | else -> "..." };
+      deep value {
+         const -> s(v) // TODO!
+       | undef -> "0"
+       | reg -> s(id)
+       | e -> e};
+      deep type {
+         v -> if(bits==1) "" else ["["; s(bits-1); ":0]"]
+      };
+      deep ram {
+         else -> [] // TODO!
+      };
+      deep top {
+         module -> [
+             "module "; s(nm); "(";'PUSHSTOP'; interleave(args, [","; 'FORCECR']); 'POP'; ");";
+             'PUSHTAB';
+             'FORCECR';
+                rams;
+                es;
+             'POP'; 'FORCECR';
+             "endmodule"; 'FORCECR']}}}}
+
+\pfcode{
+
+function inline_wrapper_body(path, fnm, args)
+symbols(pfx) {
+   isptr(tp) = visit:ir2 (irtype: tp) {once irtype {pointer -> true|else -> []}};
+   inputs = map append [tp;nm] in args do
+              if(isptr(tp)) [] else [nm];
+   returns = map append [tp;nm] in args do
+              if(isptr(tp)) [nm] else [];
+   argpairs0 = do loop(i = inputs) {
+      match i with
+        [a;b;@rest] -> [a;b]:loop(rest)
+      | [a] -> [[a]]
+      | else -> []};
+  <lastpair:argpairs> = argpairs0;
+   cbody = #`(begin (expr (inline (void) () (verilog (usemodule ,(S<< path "/" fnm ".v")))))
+                   (expr (inline (void) ()
+                        (verilog (instance ,fnm
+                                          ((bind REQ (reg  ,(Sm<< pfx "_req")))
+                                           (bind ACK (wire ,(Sm<< pfx "_ack")))
+                                           ,@=pf: map [tp;nm] in args do {
+                                                    if (isptr(tp)) #`(bind ,nm (wire ,(Sm<< pfx "_" nm)))
+                                                          else     #`(bind ,nm (reg  ,(Sm<< pfx "_" nm)))
+                                                                   })))))
+
+                   ,@=pf: map ap in argpairs do
+                        #`(expr (inline (void) (,@(foreach-map (a ap) `(var ,a)))
+                                         (verilog (execop (args ,@(foreach-map (a ap) `(arg ,a)))
+                                              (,@=pf: map a in ap do #`(nonblocking (var ,(Sm<< pfx "_" a)) (var ,a)))
+                                              (noreturn)
+                                              ))))
+                                               
+                   ,=pf: {ap = lastpair;
+                              #`(expr (inline (void) (,@(foreach-map (a ap) `(var ,a)))
+                                         (verilog (execop (args ,@(foreach-map (a ap) `(arg ,a)))
+                                              (,@=pf: map a in ap do #`(nonblocking (var ,(Sm<< pfx "_" a)) (var ,a))
+                                               (nonblocking (var ,(Sm<< pfx "_req")) (number "1")))
+                                            (wait (var ,(Sm<< pfx "_ack"))
+                                                 ((nonblocking (var ,(Sm<< pfx "_req")) (number "0")))
+                                               (else
+                                                 ((nonblocking (var ,(Sm<< pfx "_req")) (number "0")))))))))}
+                   ,@=pf: map r in returns do
+                      #`(set () (deref (var ,r))
+                           (inline (integer i32) () (verilog (execop (noargs) () (return (var ,(Sm<< pfx "_" r)))))))
+                  );
+   cargs = map [tp;nm] in args do {
+      if (isptr(tp))
+                ['ptr'('integer'('i32'));'v'(nm)]
+           else ['integer'('i32');'v'(nm)]
+   };
+   return clike_compile_code([], clike_local_env(clike_global_env(), cargs), cbody, 'void'(), 'void'())
+}}
+
+\pfcode{
+function prep_hls(env, path, fn, fnm) {
+  // 1. Run the HLS compiler backend for this function and generate
+  //    a Verilog module (current path + function name ".v")
+  <g2tp:g2> = ll_genssa_opt(env, fn);
+  g3 =  ll_to_hls_driver(g2);
+  %call-with-output-file(%S<<(fnm, ".v"), fun(fout)
+         %generic_pprint:pprint(ll_to_hls_hls3_to_verilog(g3), fun(x) fprint(fout, x)));
+
+  // 2. Generate an inline interface function with the same name and pass
+  //    it back to the Small1 backend.
+  ret = visit:ir2(irtoplevel: fn) {
+    once irtoplevel {
+      %function -> {
+         cbody = inline_wrapper_body(path, fnm, args);
+         nbody =  map r in cbody do ir0_ir2_bblock(r);
+         mk:node(cc = [], annotations = ['inline'()], body =  nbody)}
+      |  else -> ccerror('WHAT'(fn))}};
+  return ret}}
+
+%%%%

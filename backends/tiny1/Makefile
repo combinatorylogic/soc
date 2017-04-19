@@ -27,6 +27,10 @@ test: model exe sw/test.s.hex
 	./hw/verilator/obj_dir/simx sw/test.s.hex > testlog2
 	diff testlog1 testlog2
 
+
+synth.v: hw/rtl/core.v synth.ys
+	yosys -qv3 -l synth.log synth.ys
+
 ice: sw/ice.s.hex
 	cp sw/ice.s.v hw/ice/bootram.v
 	$(MAKE) -C hw/ice all

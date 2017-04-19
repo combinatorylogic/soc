@@ -34,6 +34,9 @@
    parameter ALU_ASHR = 13;
    parameter ALU_SELECT = 14;
 
+   parameter ALU_DBG = 15;
+
+
    
    // Branch
    parameter BR_JMP = 0;
@@ -44,6 +47,9 @@
    parameter BR_JMPRI = 5;
 
    parameter BR_IRQACK = 6;
+
+   parameter BR_NOP = 7;
+
 
 
    // Immed

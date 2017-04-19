@@ -138,11 +138,11 @@ function tiny1_string_to_words(s) {
 
 \pfcode{
 function tiny1_sanitise_input(code) {
-  map append op in code do
+  map append op in code do {
     visit:tiny1asmsrc(op:op) {
      deep op {
         string -> tiny1_string_to_words(s)
-      | else -> [node]}}}}
+      | else -> [node]}}}}}
 
 \pfcode{
 function tiny1_level_op(op, pos, lbls) {
@@ -220,6 +220,7 @@ function tiny1_macroasm_labels(dbg, code, initpos) {
 function tiny1_bitcode_macroop(op) {
 
   pack1reg(opc, reg) = [.bitpack(16|4:reg, 7:0, 5:opc)];
+  pack2reg(opc, r1, r2) = [.bitpack(16|4: r2, 4:r1, 3:0, 5:opc)];
   pack3reg(opc, rdst, r1, r2) = [.bitpack(16|4: r2, 4:r1, 4:rdst, 4:(opc/2))];
   packi11(opc, i11) = [.bitpack(16|11:i11, 5:opc)];
   packi10(opc, pfx, i10) = [.bitpack(16|10:i10, 1:pfx, 5:opc)];
@@ -253,9 +254,9 @@ function tiny1_bitcode_macroop(op) {
      | ret -> pack1reg(24, 0)
      | inc -> pack1reg(25, dst)
      | dec -> pack1reg(26, dst)
-     | shl -> pack3reg(27, 0, dst, src)
-     | shr -> pack3reg(28, 0, dst, src)
-     | not -> pack3reg(29, 0, dst, src)
+     | shl -> pack2reg(27, src, dst)
+     | shr -> pack2reg(28, src, dst)
+     | not -> pack2reg(29, dst, src)
 
      | addc -> packext3reg(1, dst, a, b)
      | longimmed -> packext3immed(0, dst, b)

@@ -88,12 +88,12 @@ define static_microcode = .tiny1mucode:
 @SUBx:
                       B = 0xf  // decode vreg1
                       C = ISRC&B
-                      A = {C}  // read vreg1
+                      A = ~{C}  // read vreg1
 
                       C = ISRC>>4 // decode vreg2
                       C = C&B
                       B = A
-                      A = ~{C}     // read vreg2
+                      A = {C}     // read vreg2
                       A = A+B      // add vreg1 to vreg2
                       B = 1
                       A = A+B      // add 1
@@ -467,7 +467,7 @@ define static_microcode = .tiny1mucode:
 @SHL:                 B = 0xf    // decode L
                       C = ISRC&B
                       A = {C}
-
+                      
                       C = ISRC>>4
                       C = C&B
                       B = {C}   // decode R
@@ -483,7 +483,7 @@ define static_microcode = .tiny1mucode:
 
          SHL_end:     A=C // store the result
                       B=0xf
-                      C=ISRC>>4
+                      C=ISRC&B
                      {C} = A
 
                       B = 2
@@ -509,7 +509,7 @@ define static_microcode = .tiny1mucode:
 
          SHR_end:     A=C // store the result
                       B=0xf
-                      C=ISRC>>4
+                      C=ISRC&B
                      {C} = A
 
                       B = 2

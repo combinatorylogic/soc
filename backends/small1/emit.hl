@@ -334,9 +334,28 @@ function small1_removeallocas(body) {
 include "./regalloc.hl"
 }
 
+
+\pfcode{
+%"ir2tree->ir2tree"
+function small1_pops(env, b) {
+  voidfun(fp) = {
+       visit:ir2(irtype: ll_env_fun_retval(env, fp)) {
+         once irtype {
+            void -> true
+          | else -> []}}};
+  visit:ir2tree(ircode: b) {
+     once irterm { else -> node };
+     once irexpr {
+        store -> node
+      | call -> if (voidfun(fn)) node else
+                'call'('_pop', 'expr'(gensym(), node))  
+      | callptr -> node // TODO: preserve the return
+                        //    type here somehow!
+      | else -> 'call'('_pop', 'expr'(gensym(), node))}}}}
+
 \pfcode{
 %"ir2tree -> ir3tree"
-function small1_tree_lowering_fun_3(fn, fnnm, rettp, args, body, liftglobal)
+function small1_tree_lowering_fun_3(env, fn, fnnm, rettp, args, body, liftglobal)
 {
    // 1. Build a stack map from allocas
    varstkmap = mkhash();
@@ -412,7 +431,7 @@ function small1_tree_lowering_fun_3(fn, fnnm, rettp, args, body, liftglobal)
                | else -> simple(t0)
               }}} else return topval
           }};
-   bblks = visit:ir2tree(ircode: small1_removeallocas(body)) {
+   bblks = visit:ir2tree(ircode: small1_pops(env, small1_removeallocas(body))) {
      deep irpair: e;
      deep irexpr {
        load -> ptr('load',[])
@@ -531,7 +550,7 @@ function small1_wordstream_const(name, v) {
 
 
 \pfcode{
-function small1_tree_lowering_3( types, mdl )
+function small1_tree_lowering_3( env,  types, mdl )
 collector(liftglobal, getglobals) {
   get_body(f) = visit:ir2tree(irtoplevel:f) {
      once irtoplevel {%function -> body
@@ -541,7 +560,7 @@ collector(liftglobal, getglobals) {
        %function -> {
          <renm:ir2alloc> = small1_regalloc(node);
           ir2alloc_body = get_body(ir2alloc);
-          return small1_tree_lowering_fun_3(ir2alloc, name, ret, args, ir2alloc_body, liftglobal)
+          return small1_tree_lowering_fun_3(env, ir2alloc, name, ret, args, ir2alloc_body, liftglobal)
        }
      | global -> small1_wordstream_const(name, v)
      | else -> node
@@ -633,6 +652,8 @@ function small1_intrinsic_call(fp, args)
   | '_ptrint' -> car(args)
   | '_irqack' -> ['BR_IRQACK'()]
   | '_not' -> [@car(args);'ALU_NOT'()]
+  | '_nop1' -> ['BR_NOP'()]
+  | '_pop' -> [@car(args);'POP'()]
   | '_shlone' -> [@car(args);'ALU_SHL'()]
   | '_shrone' -> [@car(args);'ALU_SHR'()]
   | '_ashrone' -> [@car(args);'ALU_ASHR'()]
@@ -648,6 +669,8 @@ function small1_intrinsic_call(fp, args)
   | '_custom1_0'
   | '_custom0_0'
   | '_custom0_1' -> mkcustom(args)
+
+  | '_dbg' -> [@car(args);@cadr(args); 'ALU_DBG'(); 'POP'()]
 
   | else -> []
   }
@@ -822,7 +845,7 @@ collector(vladd, vlget) {
  <[env;types]> = envtypes;
   irl =  small1_tree_lowering(mdl3);
   ir2 =  small1_tree_demote(irl);
-  ir3 =  small1_tree_lowering_post(small1_tree_lowering_3(types, ir2));
+  ir3 =  small1_tree_lowering_post(small1_tree_lowering_3(env, types, ir2));
   asm =  small1_post_pinned(small1_emit(env, ir3));
   lasm = #(call-with-output-file (S<< fnm ".dbg")
             =pf: fun(fo) {try {

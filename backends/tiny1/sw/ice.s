@@ -9,13 +9,28 @@
 
    .align 8
    main:
-       r9 = #0xf
+       call primes // Init the primes table
+
+       r9 = 0
+       r6 = #@RAM
+       r11 = #32
     main_loop_0:
        r4 = 33; r3 = 0x21; r5 = 1
-       r9++
-       r1 = #0x8008
-       r8 = r9
-       [r1] = r8 // blink leds
+       r10 = r9
+       r10 << r5
+       r10 = r10 + r6
+       r13 = [r10]
+       if r13 goto skip_blink
+         r1 = #0x8008
+         [r1] = r9 // blink leds
+      skip_blink:
+       r9 ++
+       r12 = r11 - r9
+       if !r12 goto reset_counter
+       goto main_loop
+      reset_counter:
+       r9 = 0
+
     main_loop:
        r1 = r3
        call putc
@@ -91,4 +106,62 @@
        r2 = pop
        r1 = pop
        ret
+
+
+   .align 8
+   primes:
+     push r1
+     push r2
+     push r3
+     push r4
+     push r8
+     push r9
+     push r10
+     
+     r1 = #@RAM // Array start
+     r4 = 1
+     r1 >> r4
+     r2 = 2     // Step
+     r3 = #32  // Array size
+     r9 = r1 + r3 // Array end
+     r8 = #0x8000 // negative
+     r10 = #16 // Max step
+
+     steploop:
+       r1 = #@RAM // Array start
+       r4 = 1
+       r1 >> r4
+       r3 = r1 + r2
+       r3 = r3 + r2
+       
+       iterloop:
+          r4 = 1
+          r1 = r3
+          r1 << r4
+         [r1] = r4
+          r3 = r3 + r2
+          
+          r4 = r9 - r3
+          r4 = r4 & r8
+         if !r4 goto iterloop
+          r2 ++
+          r4 = r10 - r2
+          r4 = r4 & r8
+         if !r4 goto steploop
+
+
+     r10 = pop
+     r9  = pop
+     r8  = pop
+     r4  = pop
+     r3  = pop
+     r2  = pop
+     r1  = pop
+     ret
+
+
+   // End of code section
+   .align 8
+     RAM: .asciiz ""
+
 

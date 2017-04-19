@@ -86,6 +86,7 @@ ast small1asm {
    | ALU_GE(immediate:v)
    | ALU_GEQ(immediate:v)
    | ALU_SELECT()
+   | ALU_DBG()
 
    // Intermediate instructions, do not directly map to
    //   any opcodes.
@@ -101,6 +102,7 @@ ast small1asm {
    | BR_JMPI()
    | BR_JMPRI()
    | BR_IRQACK()
+   | BR_NOP()
 
    // Immediate
    | PUSHSE(immediate:v)
@@ -162,6 +164,7 @@ function small1asm_instr_opclass(inst_tag)
    | ALU_GE
    | ALU_GEQ
    | ALU_SELECT
+   | ALU_DBG
    | ALU_NOT -> 0 // IC_ALU
    
    | BR_JMP
@@ -170,7 +173,8 @@ function small1asm_instr_opclass(inst_tag)
    | BR_JMPRC
    | BR_JMPI
    | BR_JMPRI
-   | BR_IRQACK -> 1 // IC_BRANCH
+   | BR_IRQACK
+   | BR_NOP -> 1 // IC_BRANCH
 
    | PUSHSE
    | PUSH
@@ -221,6 +225,7 @@ function small1asm_instr_code(inst_tag)
    | ALU_GEQ -> 12
    | ALU_ASHR -> 13
    | ALU_EQ  -> 7
+   | ALU_DBG -> 15
    | ALU_SELECT -> 14 // IC_ALU
    
    | BR_JMP  -> 0
@@ -229,7 +234,8 @@ function small1asm_instr_code(inst_tag)
    | BR_JMPRC -> 3
    | BR_JMPI  -> 4
    | BR_JMPRI -> 5
-   | BR_IRQACK -> 6 // IC_BRANCH
+   | BR_IRQACK -> 6
+   | BR_NOP -> 7 // IC_BRANCH
 
    | PUSHSE -> 0
    | PUSH   -> 1

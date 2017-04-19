@@ -3,6 +3,9 @@ typedef uint32 uint;
 
 /* 1. Intrinsic declarations */
 void _nop();
+void _nop1();
+void _dbg(int32 idx, int32 n);
+
 
 void _irqack();  // exit from an IRQ handler
 
@@ -36,7 +39,7 @@ int32 _custom1_1(int32 cmd, int32 x);
 int32 _custom2_1(int32 cmd, int32 x, int32 y);
 
 // Todo: implement it as a special instruction?
-int32 *__jumptable_clamp(int32 v, int32 l, int32 r)
+inline int32 *__jumptable_clamp(int32 v, int32 l, int32 r)
 {
   if (v>=l && v<=r) return (int32 *)(v-l+1);
   return (int32 *)0;
@@ -47,29 +50,31 @@ inline int32 _LOGNOT(int32 x) {
   return _not(x)&0x1;
 }
 
-int32 _SLT(int32 l, int32 r) {
-  return (l-r)&0x80000000; // is l-r negative?
-}
-int32 _ULT(int32 l, int32 r) {
+inline int32 _SLT(int32 l, int32 r) {
   return (l-r)&0x80000000; // is l-r negative?
 }
 
-int32 _SLE(int32 l, int32 r) {
-  return (l-r)&0x80000000; // is l-r negative?
-}
-int32 _ULE(int32 l, int32 r) {
+inline int32 _ULT(int32 l, int32 r) {
   return (l-r)&0x80000000; // is l-r negative?
 }
 
-int32 _SGT(int32 l, int32 r) {
+inline int32 _SLE(int32 l, int32 r) {
+  return (l-r)&0x80000000; // is l-r negative?
+}
+
+inline int32 _ULE(int32 l, int32 r) {
+  return (l-r)&0x80000000; // is l-r negative?
+}
+
+inline int32 _SGT(int32 l, int32 r) {
   return (r-l)&0x80000000; // is l-r negative?
 }
 
-int32 _SGE(int32 l, int32 r) {
+inline int32 _SGE(int32 l, int32 r) {
   return l==r || (r-l)&0x80000000; // is l-r negative?
 }
 
-uint32 _SHR(uint32 a, uint32 b) {
+inline uint32 _SHR(uint32 a, uint32 b) {
   uint32 i = b;
   uint32 r = a;
   do {
@@ -87,7 +92,7 @@ inline int32 _ASHR(int32 a, int32 b) {
   return r;
 }
 
-int32 _SHL(int32 a, int32 b) {
+inline int32 _SHL(int32 a, int32 b) {
   int32 i = b;
   int32 r = a;
   do {
@@ -97,7 +102,7 @@ int32 _SHL(int32 a, int32 b) {
 }
 
 // Russian peasant multiplication
-int32 _IMUL(int32 a0, int32 b0)
+inline int32 _IMUL(int32 a0, int32 b0)
 {
   int32 a = a0;
   int32 b = b0;
@@ -112,7 +117,7 @@ int32 _IMUL(int32 a0, int32 b0)
 }
 
 // Integer division
-inline int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
+int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
 {
   int32 nQuotient = 0;
   int32 nPos = -1;
@@ -145,7 +150,7 @@ inline int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
   return nQuotient;
 }
 
-int32 _IUDIV(int32 a, int32 b)
+inline int32 _IUDIV(int32 a, int32 b)
 {
   uint32 rem;
   return _IDIVMOD(a, b, &rem);
@@ -157,14 +162,14 @@ inline int32 _ISDIV(int32 a, int32 b)
   return _IDIVMOD(a, b, &rem);
 }
 
-int32 _IUREM(int32 a, int32 b)
+inline int32 _IUREM(int32 a, int32 b)
 {
   int32 rem;
   _IDIVMOD(a, b, &rem);
   return rem;
 }
 
-int32 _ISREM(int32 a, int32 b)
+inline int32 _ISREM(int32 a, int32 b)
 {
   int32 rem;
   _IDIVMOD(a, b, &rem);
@@ -172,7 +177,7 @@ int32 _ISREM(int32 a, int32 b)
 }
 
 // Send a character via an SPI link
-void _printchr(uint32 chr)
+inline void _printchr(uint32 chr)
 {
   uint32 *channel = _intptr(0x10004);
   uint32 *notfull = _intptr(0x10005);
@@ -239,6 +244,14 @@ voidptr irqtable[16] = {irq0, irq1, irq2, irq3, irq3, irq3,
                         irq3, irq3, irq3, irq3};
 
 
+int32 strlen(int32 s[])
+{
+  int32 l;
+  for (l = 0; s[l]!=0; l++);
+  return l;
+}
+
+
 // Higher level functionality:
 void _print(uint32 *strdata)
 {
@@ -252,19 +265,11 @@ void _print(uint32 *strdata)
   }
 }
 
-int32 strlen(int32 s[])
-{
-  int32 l;
-  for (l = 0; s[l]; l++);
-  return l;
-}
-
 void reverse(int32 s[])
 {
   int32 i, j;
   int32 c, l;
   l = strlen(s) - 1;
-  
   for (i = 0, j = l; i<j; i++, j--) {
     c = s[i];
     s[i] = s[j];
@@ -272,11 +277,12 @@ void reverse(int32 s[])
   }
 }
 
+
 void itoa(int32 n0, int32 s[]) {
   int32 i, sign;
   int32 n = n0;
   int32 nmod;
-     
+
   if ((sign = n) < 0)  /* record sign */
     n = -n;          /* make n positive */
   i = 0;
@@ -317,5 +323,22 @@ void _testhalt()
   _printchr(0xff); // signal verilator harness to quit
   while(!bufferptr) ; // wait for any input
   _HALT();
+}
+
+inline void _debugprintchr(uint32 chr)
+{
+        _dbg(0, chr);
+}
+
+void _debugprint(uint32 *strdata)
+{
+  uint32 idx;
+  uint32 chr;
+  idx = 0;
+  while(1) {
+    chr = strdata[idx++];
+    if (!chr) return;
+    _debugprintchr(chr);
+  }
 }
 

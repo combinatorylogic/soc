@@ -1,8 +1,5 @@
 //`define ICDEBUG 1
-
-`ifdef FPGA
-// `define DUMMY_CACHE
-`endif
+//`define DUMMY_CACHE
 
 // Number of cache lines
 `define IC_WIDTH_BITS 4
@@ -74,8 +71,9 @@ module toy_icache(input clk,
    parameter S_IDLE = 0;
    parameter S_FILL = 1;
    parameter S_FILL_STEP = 2;
-
-   reg [1:0]                                   ic_state;
+   parameter S_FILL_START = 3;
+   
+   reg [2:0]                                   ic_state;
 
    reg [31:0]                                  ictagsout;
    reg [1:0]                                   ic_rq_shift;
@@ -110,15 +108,18 @@ module toy_icache(input clk,
 `endif
                     ic_data_out_valid <= 0;
                     ictags[ic_addr[`IC_WIDTH_BITS+`IC_LINES_BITS-1:`IC_WIDTH_BITS]] <= 0; // evict
-                    ic_state <= S_FILL;
+                    ic_state <= S_FILL_START;
                     data_address <= {ic_addr[31:`IC_WIDTH_BITS],`IC_WIDTH_ZERO}; // start of the line
-                    data_rd <= 1;
+                    data_rd <= 0;
                     icnewtag <= {1'b1, addrtag};
                  end
             end else begin 
                ic_data_out_valid <= 0;
                ic_data_out <= 0;
-            end
+            end // else: !if(ic_rq_shift[1])
+          S_FILL_START: begin
+             ic_state <= S_FILL_STEP;
+          end
           S_FILL: begin
              if (data_in_ready) begin
 `ifdef ICDEBUG

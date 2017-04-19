@@ -14,7 +14,7 @@ module vram(input clk,
    always @(posedge clk)
      begin
 	if (p1_we) begin
-	   mem[p1_addr] = p1_data;
+	   mem[p1_addr] <= p1_data;
 	end
 	p2_data <= mem[p2_addr];
      end

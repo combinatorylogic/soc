@@ -34,6 +34,9 @@ Compiler accepts a [C-like extensible language](https://github.com/combinatorylo
 is possible to inline Verilog code into C to seamlessly enhance
 the CPU core functionality, see backends/small1/sw/long_hdltests/test1.c for example.
 
+There is also an experimental HLS engine, allowing to implement custom instructions directly in Clike.
+See backends/small1/sw/hdltests/test6.c (a hardware integer division implementation).
+
 # BUILDING
 
 [MBase](https://github.com/combinatorylogic/mbase), [Xilinx ISE](http://www.xilinx.com/products/design-tools/ise-design-suite/ise-webpack.html) and [Verilator](http://www.veripool.org/wiki/verilator) are required for building.
@@ -89,7 +92,7 @@ or simulation binaries (see backends/small1/sw/hdltest/runtest.sh for example).
 For example:
 ```bash
     make clikecc.exe
-    mono clikecc.exe /out hdltest1 backends/small1/sw/long_hdltests/test1.c
+    mono clikecc.exe /out hdltest1.hex backends/small1/sw/long_hdltests/test1.c
    # Install the generated Verilog files into the build infrastructure
     cp hdltest1_out/*.v   backends/small1/hw/custom/
    # Rebuild the bitfile

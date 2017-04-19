@@ -8,6 +8,11 @@ module testbench;
 
    wire LED1, LED2, LED3, LED4, LED5, LED6, LED7, LED8;
 
+   wire [7:0] LEDS;
+
+   assign LEDS = {LED8, LED7, LED6, LED5, LED4, LED3, LED2, LED1};
+   
+
    wire dummy;
    reg  rdummy;
    always @(posedge clk) rdummy <= dummy;
@@ -23,13 +28,13 @@ module testbench;
 	     .LED8(LED8),
              .RXD(1'b0),
              .TXD(dummy),
-             .rst(1'b0)
+             .rst(1'b1)
              );
    
 
    	initial begin
-	   $monitor(LED8, LED7, LED6, LED5, LED4, LED3, LED2, LED1);
-	   repeat (100000) @(posedge clk);
+	   $monitor("%x", LEDS);
+	   repeat (400000) @(posedge clk);
 	   $finish;
 	end
 

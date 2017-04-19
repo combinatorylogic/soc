@@ -82,6 +82,7 @@ function verilog_pprint_inner(v)
      | case -> ["case (";e;")";es;"endcase"]
      | casex -> ["casex (";e;")";es;"endcase"]
      | casez -> ["casez (";e;")";es;"endcase"]
+     | systask -> [%S<<(nm); "("; interleave(es, ","); ");"]
      | else -> ["/* ";%S<<(node);" */"]
      };
      deep caseItem {
@@ -104,7 +105,7 @@ function verilog_pprint_inner(v)
      | multipleconcatenation -> ["{";e;" ";c;"}"]
      | idx -> [nm; "[";l;"]"]
      | idx2 -> [nm; "[";l;":";r;"]"]
-     | string -> ["\""; s; "\""]
+     | string -> [s]
      | unop -> [" ";op;" (";p;")"]
      | binop -> [" (";l;") ";op;" (";r;")"]
      | ternary -> [" (";c;") ? ("; l;") : (";r;")"]

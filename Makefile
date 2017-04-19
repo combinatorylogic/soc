@@ -30,6 +30,9 @@ longtests: backends/small1/hw/soc/logipi/verilated/obj_dir/simx clikecc.exe
 	$(MAKE) -C backends/small1/sw/long_tests runtests
 	$(MAKE) -C backends/small1/sw/long_hdltests runtests
 
+longhdltests: clikecc.exe
+	$(MAKE) -C backends/small1/sw/long_hdltests runtests
+
 logipi:
 	$(MAKE) -C backends/small1/hw/soc/logipi
 

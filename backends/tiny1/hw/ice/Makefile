@@ -12,7 +12,7 @@ tiny1_soc_stick.blif: stick.pcf $(SOURCES) top.v
 	yosys -p "synth_ice40 -top tiny1_soc -blif tiny1_soc_stick.blif" -f "verilog -DICESTICK=1" top.v $(SOURCES)
 
 tiny1_soc.txt: tiny1_soc.blif 8k.pcf
-	arachne-pnr -r -d 8k -p 8k.pcf tiny1_soc.blif -o tiny1_soc.txt
+	arachne-pnr -m 500 -s 2323 -d 8k -p 8k.pcf tiny1_soc.blif -o tiny1_soc.txt
 
 tiny1_soc_stick.txt: tiny1_soc_stick.blif stick.pcf
 	arachne-pnr -r -d 1k -p stick.pcf tiny1_soc_stick.blif -o tiny1_soc_stick.txt
@@ -32,4 +32,8 @@ tiny1_route.v: tiny1_soc.txt
 tiny1_route.exe: tiny1_route.v tiny1_tb.v
 	iverilog -o tiny1_route.exe -s testbench tiny1_route.v tiny1_tb.v $(SIMCELLS)
 	chmod +x tiny1_route.exe
+
+tiny1_route_test: tiny1_route.exe
+	vvp -n tiny1_route.exe > tiny1_route.out
+	diff tiny1_route.out tiny1_route.out_ref
 

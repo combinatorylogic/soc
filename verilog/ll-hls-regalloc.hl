@@ -1,0 +1,163 @@
+% literate: 
+
+\subsection{Register allocation}
+
+\pfcode{
+%"hls0:top -> hls0:top; Register allocation"
+function ll_to_hls_opt_registers(aenv, top) {
+  // *. Register allocation the easy way:
+  //    All registers are considered to be of a same width;
+  //    Registers that are fused together are all simply "extended" to
+  //    the size of the fattest one.
+  //
+  //    ACK and the output registers must be excluded.
+
+  // 1. Extract genreg code (for each FSM separately, do not touch the pipelines)
+  genfsmregs(f) = collector(add, get) {
+     visit:hls2 /rec/ (modentry: f) {
+        deep stmt {
+           set -> add(reg) | else -> []}};
+     ht = mkhash();
+     iter r in get() do ohashput(ht, r, r);
+     return ht};
+  togenreg(regpfx, f, vchains, exclude) = { // TODO: optimise, cache!!!
+    thisfsmregs = genfsmregs(f);
+    isareg(id) = (ohashget(thisfsmregs, id) && not(ohashget(exclude, id)));
+    doexpr(e) =
+     collector(addg, getg) {
+       getvchain(id) = {
+         aif(c0 = ohashget(vchains, id))
+           do cloop(i = id) {
+             aif(chk = ohashget(vchains, i)) {
+               map append c in chk do cloop(c)
+             } else [i]}
+         else []};
+       visit:hls2 /rec/ (expr: e) {
+          deep value {
+            reg -> aif (chk = getvchain(id))
+                       iter c in chk do if (isareg(c)) addg(c)
+                   else if(isareg(id)) addg(id)
+          | else -> []}};
+       return unifiq(getg())};
+    gvs(l) = if(l) map l do 'V'(l,regpfx) else ['C'()];
+    getgens(ss) =
+      collector(addgen, getgs) {
+       iter s in ss do {
+         visit:hls2 /rec/ (stmt: s) {
+            deep stmt {
+               set -> iter v do addgen(v)
+             | if  -> iter e do addgen(e)
+             | switch -> iter id do addgen(id)
+             | load_start -> iter o in off do addgen(o)
+             | store -> iter i in (idx::v) do addgen(i)
+             | else -> []
+            };
+            once expr { else -> doexpr(node()) }}};
+       return unifiq(getgs())};
+    getkills(ss) =
+      collector(addkill, getkills) {
+       iter s in ss do {
+         visit:hls2 /rec/ (stmt: s) {
+            deep stmt {
+               set -> if (ohashget(exclude, reg)) [] else addkill(reg)
+             | else -> []}}};
+       unifiq(getkills())};
+    getexits(ss) =
+      collector(adde, getes) {
+       iter s in ss do {
+         visit:hls2 /rec/ (stmt: s) {
+            deep stmt {
+              goto -> adde(stage)
+            | else -> []}}};
+       return unifiq(getes())};
+    visit:hls2 /rec/ (modentry: f) {
+      deep modentry {
+         xfsm -> map append s in ss do s
+       | else -> []};
+      deep fsmstage {
+         stage ->{
+                  gens = getgens(body);
+                  kills = getkills(body);
+                  exits = getexits(body);
+
+                  ['label'(name);
+                   'genkill'(gvs(kills), gvs(gens));
+                   match exits with
+                     [one] -> 'goto'(one)
+                   | many -> 'gotoconds'(['C'()], many)]}}}};
+  mkvchains(t) = {
+    vdeps = mkhash();
+    dovalue(v) = collector(add, get) {
+       visit:hls2 /rec/ (value: v) {
+          deep value {
+             reg -> add(id) | else -> []}};
+       return unifiq(get())};
+    visit:hls2 /rec/ (top: t) {
+      deep modentry {
+         assign -> ohashput(vdeps, nm, dovalue(v))}};
+    return vdeps};
+  togenregtop(t, vchains, exclude) =
+   collector(addfs, getfs) {
+    visit:hls2 /rec/ (top: t) {
+      deep modentry {
+         xfsm -> addfs(togenreg(%Sm<<(nm,"_r"), node(), vchains, exclude))
+       | else -> []}};
+    return getfs()};
+  mkexclude(t) =
+   collector(add, get) {
+      visit:hls2 /rec/ (top: t) {
+         deep modarg {
+           aout -> add(nm) | else -> []}};
+      ht = mkhash();
+      iter i in get() do ohashput(ht, i, i);
+      return ht};
+  // 2. Perform register allocation
+  reg3s = togenregtop(top, mkvchains(top), mkexclude(top));
+  regmaps = mkhash();
+  iter r in reg3s do {
+     allocd = %r3:allocateregisters([], %r3:lgraphs(r));
+     // Fuse the register maps together
+     hashiter(fun(k, v) ohashput(regmaps, %Sm<<(k), v), allocd);
+     };
+  // 3. Fuse the results back, record the register origins
+  revmap = mkhash();
+  hashiter(fun(k, v) ohashput(revmap, v, k:ohashget(revmap, v)), regmaps);
+
+  mkregtypes(t) = {
+    tph = mkhash();
+    visit:hls2 /rec/ (top: top) {
+       deep modentry {
+          register -> ohashput(tph, nm, t)};
+       deep type { v -> bits }};
+    return tph};
+  
+  regtypes = mkregtypes(top);
+
+  getmaxwidth(regs) = {
+     max2(a,b) = if (a>b) a else b;
+     ws = map r in regs do ohashget(regtypes, r);
+     return foldl(max2, 0, ws)};
+
+  newregs = hashmap(fun(k, vs) {
+                      ws = getmaxwidth(vs);
+                      with target (hls2) {
+                         return mk:modentry:register(mk:v(ws), k)
+                      }}, revmap);
+  rewrite(t) =
+     visit:hls2 /rec/ (top: top) {
+        deep top {
+           module -> mk:node(es = newregs :: (map append e in es do e))};
+        deep modentry {
+           register ->
+             if (ohashget(regmaps, nm)) [] else [node()]
+         | else -> [node()]};
+        deep stmt {
+           set -> aif(chk = ohashget(regmaps, reg)) mk:node(reg = chk) else node()
+         | else -> node()};
+        deep value {
+           reg -> aif(chk = ohashget(regmaps, id)) mk:reg(chk) else node()
+         | else -> node()}};
+
+  return rewrite(top)
+}}
+

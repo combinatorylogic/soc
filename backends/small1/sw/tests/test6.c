@@ -14,11 +14,9 @@ void _printnum(int32 *str, int32 v)
 void bootentry()
 {
   _mem_init();
-
   parsefun *f = mksequence(mkparsechar('A'),
                            mksequence(mkparsechar('B'),
                                       mkparsechar('C')));
-
   parsefun *g = mksequence(mkparsechar('D'),
                            mksequence(mkparsechar('E'),
                                       mkparsechar('F')));
@@ -33,6 +31,7 @@ void bootentry()
   ctx -> len = strlen(ctx->str);
 
   int v = runparser(ctx, f);
+  //  _printnum("X=",192);
   _printnum("V=", v);
   _printnum("POS=", ctx->pos);
   v = runparser(ctx, f);
@@ -43,6 +42,7 @@ void bootentry()
   _printnum("POS2=", ctx->pos);
   v = runparser(ctx, z);
   _printnum("V3=", v);
+  //int x = ctx->pos;
   _printnum("POS3=", ctx->pos);
   _testhalt();
 }

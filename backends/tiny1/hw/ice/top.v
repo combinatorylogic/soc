@@ -114,7 +114,7 @@ module tiny1_cpu(
      begin
         mem_data_i_mmap <= data_i_mmap_cl;
         if (mmap && mmapaddr == IO_LEDS && mem_wr_from_core) begin
-          leds <= mem_data_o_from_core[7:0];
+          leds[7:0] <= mem_data_o_from_core[7:0];
         end
      end
 
@@ -152,8 +152,8 @@ module tiny1_soc(
 
    
 	reg [7:0] resetn_counter = 0;
-	wire resetn = &resetn_counter;
-
+        wire           resetn = &resetn_counter;
+  
 	always @(posedge clk) begin
 		if (!resetn)
 			resetn_counter <= resetn_counter + 1;

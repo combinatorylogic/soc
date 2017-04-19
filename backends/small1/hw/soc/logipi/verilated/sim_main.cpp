@@ -3,11 +3,11 @@
 #include <mutex>
 #include <thread>
 #include <verilated.h>
-#include "Vtop.h"
+#include "Vsmall1soc.h"
 
 #include <ncurses.h>
 
-Vtop *top;
+Vsmall1soc *top;
 
 vluint64_t sim_clock = 0;
 vluint64_t sys_clock = 0;
@@ -247,7 +247,7 @@ int main(int argc, char **argv, char **env) {
 
   unsigned int buflen = 0;
   unsigned int *buf = readhexfile(fname==NULL?(char *)"small1.hex":fname, &buflen); // TODO: pass hex file name as an argument
-  top = new Vtop;		// Create instance of module
+  top = new Vsmall1soc;		// Create instance of module
 
 
   Verilated::commandArgs(argc, argv);

@@ -54,7 +54,17 @@ module toycpu(
 
    wire                     ic_data_in_ready;
    wire                     ic_data_rd;
-  
+ 
+
+   wire [31:0]              stack_real_addr_a;
+   wire [31:0]              stack_real_addr_b;
+   wire                     stack_wr_a;
+   wire [31:0]              stack_datain_a;
+   wire [31:0]              stack_data_a;
+   wire [31:0]              stack_data_b;
+   
+
+ 
    toycpu_core core1(.clk(clk),
                      .rst(rst),
                       
@@ -83,8 +93,27 @@ module toycpu(
                      .debug(debug),
                      .step(step),
                      .step_ack(step_ack),
-                     .stall(stall)
+                     .stall(stall),
+  
+                     .stack_real_addr_a(stack_real_addr_a),
+                     .stack_real_addr_b(stack_real_addr_b),
+                     .stack_data_a(stack_data_a),
+                     .stack_data_b(stack_data_b), 
+                     .stack_wr_a(stack_wr_a),
+                     .stack_datain_a(stack_datain_a)
                      );
+
+   toyblockram stack ( .clk(clk),
+                       
+                       .addr_a(stack_real_addr_a),
+                       .data_a(stack_data_a),
+                       .datain_a(stack_datain_a),
+                       .wr_a(stack_wr_a),
+
+                       .addr_b(stack_real_addr_b),
+                       .data_b(stack_data_b)
+                       );
+
    
    toy_icache cache1 (.clk(clk),
                       .reset(rst),
@@ -119,6 +148,7 @@ module toycpu(
                  .gnt2(gnt2),
                  .gnt3(gnt3)
                  );
+
 
    always @(posedge clk)
      if(!rst) begin

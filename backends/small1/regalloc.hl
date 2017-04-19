@@ -53,6 +53,7 @@ function small1_ir2tree_regalloc(code) {
     | br_label -> ['goto'(nm)]
     | switch -> ['gotoconds'(getgen(value), [els;@cases])]
     | indirectbr -> ['gotoconds'(getgen(addr),ds)]
+    | indirectbr_jt -> ['gotoconds'(getgen(addr),ds)]
     | else -> ['goto'('END')]
     }
   };

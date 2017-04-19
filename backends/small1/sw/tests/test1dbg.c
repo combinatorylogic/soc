@@ -4,6 +4,6 @@
 
 void bootentry()
 {
-  _print("HELLO, WORLD!\n");
-   _testhalt();
+  _debugprint("Hello again.\n");
+  _testhalt();
 }
