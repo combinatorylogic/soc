@@ -70,3 +70,67 @@ endmodule
 And a number of access custom instructions are inferred automatically behind the inlined `ctz` function call.
 
 
+# A more complex example
+
+It's possible to use memories in the synthesised modules. E.g., let's implement
+a dumb Eratosthenes sieve:
+
+```C
+__hls void primes(int32 stage, int32 prev, int32 *next) {
+        int32 buf[1025];
+        if (stage == 0) { // Precharge
+                for (int i = 0; i < 1025; i++) buf[i] = 0;
+                for (int m = 2; m <= 32; m++) {
+                        if (!buf[m]) {
+                                for (int k = m + m; k <= 1024; k+= m)
+                                        buf[k] = 1;
+                        }
+                }
+        } else if (stage == 1) { // Fetch
+                for (int i = prev; i < 1025; i++) {
+                        if (!buf[i]) {
+                                *next = i;
+                                return;
+                        }
+                }
+                *next = 0;
+                return;
+        }
+}
+```
+
+Please note that semantics of the local array is similar to `static` arrays -
+data persists between calls, so we can select a path based on an argument
+value. First call of this function will precharge the array, and then we'll use
+the consequent calls to this function to fetch the data from this array.
+
+Of course, this approach should be used sparingly - at the moment each
+synthesised RAM will occupy FPGA resources and won't be shared with the other
+modules.
+
+This example does not exploit any parallelism whatsoever, but is still much
+faster than a multi-cycle soft core and occupies much less resources than even a
+specialised core, so it's still a useful approach for the single function
+co-processors and stuff.
+
+# TODO:
+
+It's planned to add support for:
+
+* Accessing the system memory (including everything mmaped)
+* Multiplication, division and floating point
+* Shared ALU inference
+* Explicit vector operations
+* Structures (both as registers and as a RAM datatype)
+* Arbitrary bit widths
+* Accessing the I/O pins directly
+* Asynchronous operation of the synthesised modules (i.e., not necessarily driven by `REQ/ACK`)
+* Pipeline inference (to be able to generate designes similar to `mand.v` at least)
+* Pragmas for a fine control over synthesis
+* Explicit parallelism
+* A transparent verilog fallback
+* Function calls (not necessarily with inlining), but still no recursion
+
+And, of course, there is a lot of optimisations that the HLS compiler can do.
+
+
