@@ -16,5 +16,4 @@ script:
   - make hwtests
   - make hdltests
   - make longhdltests
-  - make icetest
 
