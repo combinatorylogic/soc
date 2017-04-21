@@ -117,7 +117,7 @@ co-processors and stuff.
 
 It's planned to add support for:
 
-* Accessing the system memory (including everything mmaped)
+* Accessing the system memory (including everything mapped)
 * Multiplication, division and floating point
 * Shared ALU inference
 * Explicit vector operations
@@ -125,7 +125,7 @@ It's planned to add support for:
 * Arbitrary bit widths
 * Accessing the I/O pins directly
 * Asynchronous operation of the synthesised modules (i.e., not necessarily driven by `REQ/ACK`)
-* Pipeline inference (to be able to generate designes similar to `mand.v` at least)
+* Pipeline inference (to be able to generate designs similar to `mand.v` at least)
 * Pragmas for a fine control over synthesis
 * Explicit parallelism
 * A transparent verilog fallback

@@ -706,7 +706,8 @@ function ll_to_hls_mark_output(aenv, top) {
 \pfcode{
 function ll_to_hls_lift_wires_bb(bb) {
   rewrites = mkhash(); rewrite(id) = aif(chk = ohashget(rewrites, id)) chk else id;
-  visit:hls0 /rec/ (bblock: bb) {
+  pass1() =
+   visit:hls0 /rec/ (bblock: bb) {
      deep parblock {
        pb -> mk:node(ss = map append s in ss do s)};
      deep instr {
@@ -716,7 +717,10 @@ function ll_to_hls_lift_wires_bb(bb) {
           ohashput(rewrites, dst, newnm);
           [mk:instr:i(mk:wire(), newnm, otp, op);
            mk:instr:i(mk:reg(), dst, otp, mk:v(mk:reg(newnm)))]}
-      | else -> [mk:instr:i(thisnodesrc(), dst, otp, op)]};
+      | else -> [mk:instr:i(thisnodesrc(), dst, otp, op)]}};
+  // We have to do it in two passes here, because it's possible to use
+  // a register before it's lifted to a wire within one basic block.
+  visit:hls0 /rec/ (bblock: pass1()) {
      deep value {
         reg -> mk:reg(rewrite(id))
       | else -> node()}}}}
@@ -1276,17 +1280,21 @@ function ll_to_hls_driver(top0) {
                           args = nargs,
                           body = bbs)}
        | else -> ccerror('WTF'())}};
+
    t1a = ll_to_hls_costmodel(aenv, t1);
    t1b = ll_to_hls_split_loads(aenv, t1a);
    t2  = ll_to_hls_mark_registers(aenv, t1b);
+   
    t2a = ll_to_hls_mark_output(aenv, t2);
    t2x = ll_to_hls_lift_wires(t2a);
+
    h2  = ll_to_hls_explicit_fsms(aenv, t2x);
    h3  = ll_to_hls_remove_phis(h2);
    h4  = ll_to_hls_lower_hls1(h3);
    h4x = ll_to_hls_opt_registers(aenv, h4);
    ret0 = ll_to_hls_lower_fsm(h4x);
    ret2 = ll_to_hls_lower_mems(aenv, ret0);
+   
    ret  = ll_to_hls3_sort_decls(ret2);
    return ret}}
 

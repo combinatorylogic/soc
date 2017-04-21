@@ -3,11 +3,11 @@
 #include <mutex>
 #include <thread>
 #include <verilated.h>
-#include "Vvtop.h"
+#include "Vtiny1_soc.h"
 
 #include <ncurses.h>
 
-Vvtop *top;
+Vtiny1_soc *top;
 
 vluint64_t sim_clock = 0;
 vluint64_t sys_clock = 0;
@@ -34,7 +34,7 @@ int main(int argc, char **argv, char **env) {
                 buf[n] = tmp;
         }
 
-	top = new Vvtop;		// Create instance of module
+	top = new Vtiny1_soc;		// Create instance of module
 
 	Verilated::commandArgs(argc, argv);
 	Verilated::debug(0);
