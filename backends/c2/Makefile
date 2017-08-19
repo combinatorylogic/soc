@@ -1,4 +1,4 @@
-all: test mandtest mandgfxtest
+all: test mandgfxtest
 
 ram.hex: asmcli.exe sw/icetest.s
 	mono ./asmcli.exe sw/icetest.s > ram.hex
