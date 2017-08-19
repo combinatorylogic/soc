@@ -1,0 +1,159 @@
+%literate:
+
+\subsection{Preparing the source IR}
+
+First we have to replace all the pointers and GEPs with explicit memory access operations, or fail
+if it's not possible.
+
+\pfcode{
+%"ir2:irtoplevel -> ir2:irtoplevel; Remove redundant GEPs"
+function ll_to_hls_prep_geps(top) {
+   rewriteht = mkhash();
+   rewrite(id0) =
+     do loop(id = id0) {
+       aif(chk = ohashget(rewriteht, id))
+          visit:ir2(irval: chk) {
+             deep irval { var -> loop(nm) | else -> node }}
+       else 'var'(id)};
+   iszerogep(idxs) =
+     foldl(fun(x,y) (x && y), true,
+             map i in idxs do
+                visit:ir2 (irval: i) {
+                  once irval {
+                     integer -> if(v==0) true else []
+                   | zero -> true
+                   | else -> []}});
+   prep() =
+    visit:ir2 (irtoplevel: top) {
+      deep irpair: e(nm);
+      deep irexpr(dst) {
+         getelementptr ->
+            if (iszerogep(idxs)) ohashput(rewriteht, dst, ptr)
+      | else -> []}};
+   prep();
+   return visit:ir2 (irtoplevel: top) {
+      deep irval {
+         var -> rewrite(nm)
+       | else -> node};
+      deep irpair: if (ohashget(rewriteht, nm)) [] else [node];
+      deep irbblock {
+         bblock -> mk:node(c = map append c do c)}}}}
+
+\pfcode{
+%"ir2:irtoplevel -> ht; Prepare the memories environment and check all the pointers"
+function ll_to_hls_prep_memories(top)
+collector(addram, getrams) {
+  aenv = mkhash();
+  // 1. Cache allocas
+  isptr(t) =
+    visit:ir2 (irtype: t) {
+      once irtype {
+        pointer -> t
+      | else -> []}};
+  getreg(v) =
+    visit:ir2 (irval: v) {
+      once irval {
+        var -> nm
+      | else -> []}};
+  getwidth(t) =
+    visit:ir2 (irtype: t) {
+       once irtype {
+          array -> [t;@dims]
+       |  else -> ccerror('WRONG_ALLOCA'(t))}};
+  visit:ir2 (irtoplevel: top) {
+    deep irarg: {
+       aif (ptype = isptr(type)) {
+           w = 'output'(ptype);
+           ohashput(aenv, name, w);
+           addram([name;w]);
+           ohashput(aenv, %Sm<<('PTR_', name), [name; 'integer'(0)])}
+       };
+    deep irpair: e(nm);
+    deep irexpr(dst) {
+       alloca -> {
+           w = 'alloca'(@getwidth(t));
+           addram([dst;w]);
+           ohashput(aenv, dst, dst);
+           ohashput(aenv, %Sm<<('PTR_', dst), [dst; 'integer'(0)])}
+    |  else -> node}};
+  // 2. Cache GEPs
+  visit:ir2 (irtoplevel: top) {
+    deep irpair: e(nm);
+    deep irexpr(dst) {
+       getelementptr -> {
+         // Two things here: record the memory ID for this GEP, and
+         // its offset calculation sequence, if any
+         aif(mem = ohashget(aenv, getreg(ptr))) {
+           // TODO: higher dimensions, structs, whatever
+           ohashput(aenv, %Sm<<('PTRCALC_', dst), ['NONE']);
+           ohashput(aenv, %Sm<<('PTR_', dst), [mem; car(idxs)]) // TODO: really?
+         } else ccerror('ILLEGAL_GEP'(dst))}
+     | else -> node}};
+  ohashput(aenv, '*RAMS*', getrams());
+  return aenv}}
+
+\pfcode{
+%"ir2:irbblock -> ir2mem:irbblock; explicit mstore and mload instructions"
+function ll_to_hls_bb_memories(aenv, bb) {
+   mems = mkhash();
+   getoffval(nm) = {
+      aif(r = ohashget(aenv, %Sm<<('PTRCALC_', nm))) {
+        return cdr(r)
+      } else ccerror('NOT_A_POINTER'(nm))};
+   getmemoffv(nm) = {
+      aif(r = ohashget(aenv, %Sm<<('PTR_', nm))) {
+        <[mem;off]> = r;
+        ohashput(mems, mem, mem);
+        return r;
+      } else ccerror('NOT_A_POINTER'(nm))};
+   getmemoff(v) =
+      visit:ir2 (irval: v) {
+         once irval {
+            var -> getmemoffv(nm)
+          | else -> ccerror('UNSUPPORTED_PTR'(node))}};
+   ret = visit:ir2 (irbblock:bb) {
+      deep irexpr(dst) {
+         store -> {
+            <[mem;off]> = getmemoff(ptr);
+            [[dst;'mstore'(mem, off, e)]]}
+       | load -> {
+            <[mem;off]> = getmemoff(ptr);
+            [[dst;'mload'(mem, off)]]}
+       | getelementptr -> getoffval(dst)
+       | alloca -> []
+       | else -> [[dst;node]]};
+      deep irbblock {
+         bblock -> mk:node(c = map append c do c)};
+      deep irpair: e(nm)};
+   memlist = hashmap(fun(k,v) k, mems);
+   memorders = mkhash();
+   iter m in memlist do ohashput(memorders, m, mkref([]));
+   return memorders:ret}}
+
+
+\subsubsection{Split multi-cycle operations}
+
+Memory loads and certain operations (integer multiplication, etc.) are multi-cycle and must be marked as such
+at this stage. We'll use this information later for scheduling the instructions into smaller sequential
+basic blocks. Memory loads are believed to always have one cycle latency - to be later extended with an arbitrarily
+long waiting.
+
+\pfcode{
+function ll_to_hls_bb_splitops(aenv, bb) 
+   visit:ir2mem (irbblock:bb) {
+      deep irexpr(dst) {
+         mload -> symbols(dst1) {
+            [[dst1; 'mload_start'(mem, dst1, offset)];
+             [dst; 'mload_commit'(mem, dst1, 'var'(dst1))]]}
+       | binary -> {
+           if(op == 'Mul')
+            symbols(dst1) {
+              [[dst1; 'op_start'('Mul', dst1, [l;r], 5, dst)];
+               [dst;  'op_commit'('Mul', dst1, 'var'(dst1), 5)]]
+            } else [[dst;node]]}
+       | else -> [[dst;node]]};
+      deep irpair: e(nm);
+      deep irbblock {
+         bblock -> mk:node(c = map append c in c do c)}}}
+
+%%%%%

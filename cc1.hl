@@ -1,0 +1,9 @@
+#(ctimex (define debug-display-include-paths #t))
+#(usedll CLikeSCore)
+
+include "./clike/backend/ll-ast.hl"
+litinclude  ("./doc/ll-hls") "./verilog/ll-hls.hl"
+
+litinclude ("./doc/inline") "./verilog/inline.hl"
+litinclude ("./doc/emit") "./backends/small1/emit.hl"
+

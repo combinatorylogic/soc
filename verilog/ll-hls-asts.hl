@@ -1,0 +1,218 @@
+%literate:
+
+\subsection{Intermediate ASTs}
+
+Our first two ASTs are derived from the source LLVM-like AST produced by the C compiler.
+
+One is adding explicit memory operations (vs. generic pointers and GEPs).
+
+\pfcode{
+ast ir2mem : ir2 () {
+   irexpr += mstore(ident:mem, irval:offset, irval:e)
+           | mload(ident:mem, irval:offset)
+           ;
+}}
+
+The other one splits the memory access operations into two parts - start and commit, and does the same for the
+multi-cycle operations (such as multiplication).
+
+\pfcode{
+ast ir2split : ir2mem () {
+   irexpr += mload_commit(ident:mem, ident:regid, irval:ldop)
+          |  mload_start(ident:mem, ident:regid, irval:offset)
+          |  op_start(ident:op, ident:regid, *irval:args, number:cycles, ident:dstreg)
+          |  op_commit(ident:op, ident:regid, irval:opstart, number:cycles)
+          ;
+}}
+
+
+Once we're done with the source IR, we can start using the recform ASTs. The first in line is
+introducing an explicit module (instead of a "function"), keeps the basic blocks, marked with
+FSMs or pipelines they belong to, and sorts the basic block contents into parallel blocks. Each parallel
+block is fully independent from the others, while contents of a single parblock is linked. It is not yet
+decided which assignments are to the registers and which are just wires. Phi nodes still exist at this stage.
+
+\pfcode{
+ast hls0 recform {
+    top = module(ident:nm, *ram:rams, *modarg:args, *bblock:body);
+    ram = r(ident:nm, type:t, *number:dims);
+    modarg = ain(ident:nm, type:tp)
+           | aout(ident:nm, type:tp)
+           | aoutreg(ident:nm, type:tp)
+           ;
+    
+    bblock = bb(bbtype:tp, label:name, *parblock:bs, exit:next);
+    bbtype = pipeline(ident:id) | fsm(ident:id) 
+             // A special-purpose macro blocks, to be expanded at much later stages
+           | enqueue_once(ident:id, ident:pipeline,
+                          number:depth,
+                          value:thrid,
+                          value:step,
+                          value:thrinit,
+                          *value:accum_dst,
+                          *value:accum_src)
+           | enqueue_loop(ident:id, ident:pipeline,
+                          number:depth,
+                          value:thrid,
+                          value:step,
+                          value:thrinit,
+                          
+                          *value:exit_dst,
+                          *value:exit_src,
+                          *type:exit_type,
+
+                          *reissuereg:rregs,
+                          *instr:stepinstrs,
+                          value:exitcnd,
+                          *instr:final
+                          );
+    reissuereg = r(ident:nm, type:tp, value:init, value:step);
+    parblock = pb(ident:name, *instr:ss, *ident:pars);
+    instr = i(itp:tp,ident:dst, type:otp, iop:op);
+    itp = none() | reg() | wire();          
+    iop = load(ident:mem, value:offset)
+        | store(ident:mem, value:offset, value:v)
+        | op(ident:fn, *value:args, type:rettype)
+        | convop(ident:fn, value:arg, type:t)
+        | select(value:cnd, value:tr, value:fl)
+        | phi(*phiarg:args)
+        | v(value:v) // it's not an SSA by now
+        // After the split:
+        | load_commit(ident:mem, ident:reg) // always assume a 1 cycle delay
+        | load_start(ident:mem, ident:reg, value:offset)
+        | op_commit(ident:inst, number:cycles)
+        | op_start(ident:inst, ident:fn, number:cycles, *value:args, type:tp)
+        ;
+    phiarg = p(ident:label, value:v);
+    value = const(any:v, type:t)
+          | undef(type:t)
+          | reg(ident:id)
+          | foreign(ident:dst, ident:id) // foreign register (in another pipeline/fsm)
+          ;
+    type = v(number:bits);
+    exit = br(label:dst) | brc(value:c, label:tr, label:fl) | switch(value:c, label:els, *switchdst:dsts)
+         | ret()
+         ;
+    switchdst = d(value:v, label:dst); // value must be a constant
+}}
+
+\subsubsection{Next stage IR}
+
+The next stage adds explicit FSMs and pipelines instead of basic blocks, and splits "instructions" that go
+into the FSM behavioural code and "expressions" that are lifted into the wire assignments. We still have phis
+here, now lifted into wire assignments, but marked with the corresponding FSM stage ids - later they'll be used
+to replace phis with simple selects, based on a previous stage marker. Obviously, no phis in the pipeline stages,
+as pipelines are supposed to be fully linear.
+
+\pfcode{
+ast hls1 : hls0 () recform {
+   top = module(ident:nm, *ram:rams, *modarg:args, *modentry:es);
+   modentry = fsm(ident:nm, ident:start, *fsmstage:ss)
+            | register(type:t, ident:nm)
+            | wire(type:t, ident:nm)
+            | assign(ident:nm, value:v)
+            //TODO:
+            | pipeline(ident:nm, *pipestage:ss)
+            | special(specentry:v)
+            ;
+   specentry = 
+             enqueue_once(ident:id, ident:pipeline,
+                          number:depth,
+                          value:thrid,
+                          value:step,
+                          value:thrinit,
+                          *value:accum_dst,
+                          *value:accum_src)
+           | enqueue_loop(ident:id, ident:pipeline,
+                          number:depth,
+                          value:thrid,
+                          value:step,
+                          value:thrinit,
+                          
+                          *value:exit_dst,
+                          *value:exit_src,
+                          *type:exit_type,
+
+                          *reissuereg:rregs,
+                          *instr:stepinstrs,
+                          value:exitcnd,
+                          *instr:final
+                          );
+   fsmstage = stage(label:name, *instr:ss, exit:next);
+   pipestage = stage(label:name, *instr:ss, expr:stall); // keep names for debugging
+   instr = a(ident:reg, type:otp, iop:op) | z(iop:op);
+   expr = 
+          op(ident:fn, *value:args, type:rettype)
+        | convop(ident:fn, value:arg, type:t)
+        | select(value:cnd, value:tr, value:fl)
+        | nphi(ident:fsm, ident:stage, *phiarg:args)
+        | v(value:v)
+        | load_commit(ident:mem, ident:reg)
+        | op_commit(ident:inst)
+        ;
+   iop += nphi(ident:fsm, ident:stage, *phiarg:args)
+       |  -phi
+       |  -load
+       ;
+   // Nesting is ok at the later stages (e.g., phi elimination)
+   value += e(expr:e);
+}}
+
+\subsubsection{Simpler IR}
+
+The consequent lowering drops conditional terminal instructions and replaces them with if and goto statements.
+Phis are replaced with selects by now.
+
+\pfcode{
+ast hls2 : hls1() recform {
+   fsmstage = stage(label:name, *stmt:body);
+   modentry += xfsm(ident:nm, label:start, stmt:reset, *fsmstage:ss)
+            |  xpipeline(ident:nm, stmt:reset, stmt:body)
+            |  -fsm
+            |  -pipeline
+            ;
+   expr += -nphi
+        ;
+   stmt = begin(*stmt:ss)
+        | if(expr:e, stmt:tr, stmt:fl)
+        | goto(label:stage)
+        | switch(expr:id, stmt:dflt, *case:cs)
+        | set(ident:reg, expr:v)
+        | store(ident:mem, expr:idx, expr:v)
+        | load_start(ident:mem, ident:reg, expr:off)
+        | op_start(ident:inst, ident:fn, number:cycles, *expr:args, type:tp)
+        ;
+   case = d(value:v, stmt:s);
+}}
+
+\subsubsection{Verilog backend}
+
+And a final step, suitable for a direct pretty-printing into Verilog - FSMs and pipelines are now replaced
+with clock-sensitive always statements, and memories and functions are instantiated as modules.
+
+\pfcode{
+ast hls3 : hls2 () recform {
+   modentry += always(stmt:s)
+               // TODO: multiport RAMs
+            |  ram(ident:id, number:w, number:size,
+                   value:readaddr1, value:readout1,
+                   value:writeaddr1, value:writein1, value:we)
+            |  inst(ident:id, ident:fn, *instpar:cs, *instport:ps)
+            |  -xfsm
+            ;
+   instpar = p(ident:nm, expr:v); // in fact, only constants are allowed
+   instport = p(ident:nm, expr:v);
+   expr += isfsmstage(ident:fsmname, ident:stage)
+        |  selectchain(*selectelt:es)
+        ;
+   stmt += nop()
+        | store_x(ident:stagereg, value:stage, ident:mem, expr:idx, expr:v)
+        | load_start_x(ident:stagereg, value:stage,
+                       ident:mem, ident:reg, expr:off)
+        | display(string:text, *value:args)
+        ;
+   selectelt = e(value:c, value:v);
+}}
+
+
+%%%%%%

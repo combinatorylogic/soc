@@ -49,6 +49,7 @@ function ll_to_hls_opt_registers(aenv, top) {
              | if  -> iter e do addgen(e)
              | switch -> iter id do addgen(id)
              | load_start -> iter o in off do addgen(o)
+             | op_start -> iter a in args do iter o in a do addgen(o)
              | store -> iter i in (idx::v) do addgen(i)
              | else -> []
             };
@@ -107,7 +108,9 @@ function ll_to_hls_opt_registers(aenv, top) {
    collector(add, get) {
       visit:hls2 /rec/ (top: t) {
          deep modarg {
-           aout -> add(nm) | else -> []}};
+           aout -> add(nm)
+         | aoutreg -> add(nm)
+         | else -> []}};
       ht = mkhash();
       iter i in get() do ohashput(ht, i, i);
       return ht};

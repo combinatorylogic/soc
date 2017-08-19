@@ -1,0 +1,146 @@
+%literate:
+
+\subsection{Translating IR2 into HLS0}
+
+Now we can drop our original IR and produce the first HLS IR, splitting each basic block into
+a number of parallel blocks.
+
+\pfcode{
+%"ir2mem:irbblock -> []; order register dependencies within this basic block"
+function ll_to_hls_fill_deporder(ordgraph, bb) {
+   vars = mkhash();
+   // 1. Cache the registers defined in this block
+   visit:ir2split (irbblock: bb) {
+      once irpair: ohashput(vars, nm, nm)};
+   // 2. Add register dependencies to the graph, ignoring phis
+   adddeps(dst, n) = {
+      ll_to_hls_addnode(ordgraph, dst);
+      visit:ir2split (irexpr: n) {
+         once irval {
+            var -> if(ohashget(vars, nm)) ll_to_hls_addedge(ordgraph, nm, dst)
+          | else -> []}}};
+   visit:ir2split (irbblock: bb) {
+      deep irpair: e(nm);
+      once irexpr(dst) {
+         phi -> ll_to_hls_addnode(ordgraph, dst)
+       | else -> adddeps(dst, node)
+      }}}}
+
+\pfcode{
+%"ht -> [[nodes]...]; topological sort"
+function ll_to_hls_sort_ordgraph(ordgraph) {
+   // 1. Reverse the graph, find nodes with zero dependencies
+   rev = ll_to_hls_mkgraph();
+  <nodes:edges> = ordgraph;
+   hashiter(fun(k,vs) iter v in vs do ll_to_hls_addedge(rev, v, k), edges);
+  <_:revedges> = rev;
+   // 1x. Full dependencies (there are no loops in this graph)
+   fulldeps = mkhash();
+   iter n in hashmap(fun(k,v)k, nodes) do {
+     do loop0(deps = ohashget(revedges, n)) {
+       if(deps) {
+          ohashput(fulldeps, n, unifiq(deps::ohashget(fulldeps, n)));
+          iter x in deps do loop0(ohashget(revedges, x))}}};
+   seed = collector(addseed, getseed) {
+      hashiter(fun(k, x) if (not(ohashget(revedges, k))) addseed(k), nodes);
+      return getseed()};
+   // 2. Breadth--first walking starting from the seed list
+   collector(addpar, getpar) {
+     do loop(f = seed) {
+        if(f) addpar(f);
+        next0 = unifiq(map append f do ohashget(edges, f));
+        // eliminate the edges that depend on any other edges in this list
+        next = filter l in next0 as not(set_intersect(next0, ohashget(fulldeps, l)));
+        if(next) loop(next)};
+     return getpar()}}}
+
+\pfcode{
+%"ir2:irbblock -> hls0:bb; Detect parallelism in a given basic block"
+function ll_to_hls_bb_split(aenv, bb, types) {
+
+   // 2. Add memory access order, if any:
+   //
+   //    For each instruction in a bb, if it is a memory instruction, add it to
+   //    the corresponding memory order lane.
+   ordgraph = ll_to_hls_mkgraph();
+   // 3. Add direct dependency order, if any (not counting phi depencencies)
+   //
+   //    For each instruction, add a destination dependency on its sources from the same basic block,
+   //       unless it is a phi instruction, in this case do nothing.
+   //
+   ll_to_hls_fill_deporder(ordgraph, bb);
+   // 4. Topological sort of the order graph
+   parlists = ll_to_hls_sort_ordgraph(ordgraph);
+   // 5. Emit a sequence of par blocks out of a sorted order graph (may result in a single large par block);
+   //    Use this step to translate ir2 instructions, values, whatever to hls0.
+   bit = with target(hls0) mk:type:v(1);
+   mkconst(v, tp) = with target(hls0) mk:value:const(v, tp);
+   mkundef(tp) = with target(hls0) mk:value:undef(tp);
+   gettype(t) = ll_to_hls_gettype(t);
+   gettype2(nm, t) =
+      if(t) gettype(t) else bit;
+
+   remove_allocas(b) =
+      visit:ir2split (irbblock: b) {
+         deep irbblock {
+            bblock -> mk:node(c = map append c do c)};
+         deep irpair : e(nm);
+         deep irexpr {
+            alloca -> fun(dstreg) []
+          | else   -> fun(dstreg) [[dstreg;node]]}};
+   bb1 = remove_allocas(bb);
+   return visit:ir2split (irbblock: bb1) {
+       deep irbblock {
+          bblock ->
+               with target(hls0) {
+                  // 1. Cache the translated entries
+                  entries = mkhash();
+                  iter [nm;e] in c do
+                     ohashput(entries, nm, e);
+                  // Note the irony: an old AST visitor is building
+                  //  a recform AST here, and it's a lot of boilerplate
+                  mk:bblock:bb(tp = mk:fsm('default'),
+                               name = name,
+                               bs = map l in parlists do {
+                                  // Name of the first entry in a par block is a name of this block,
+                                  // just because.
+                                  mk:pb(name = car(l), ss = map e in l do
+                                                               mk:instr:i(mk:none(), e,
+                                                                          gettype2(e, ohashget(types, e)),
+                                                                          ohashget(entries, e)),
+                                                       pars = [])},
+                               next = t)}};
+       deep irpair: [nm;e(nm)];
+       deep irexpr(dst) {
+          mstore -> with target(hls0) mk:iop:store(mem, offset, e)
+        | mload  -> with target(hls0) mk:iop:load_start(mem, offset)
+        | mload_start  -> with target(hls0) mk:iop:load_start(mem, regid, offset)
+        | mload_commit -> with target(hls0) mk:iop:load_commit(mem, regid)
+        | op_start -> with target(hls0) mk:iop:op_start(inst = regid, fn = op, cycles = cycles,
+                                                        args = args, tp = gettype2(dstreg, ohashget(types, dstreg)))
+        | op_commit -> with target(hls0) mk:iop:op_commit(inst = regid, cycles = cycles)
+        | binary -> with target(hls0) mk:iop:op(op, [l;r], gettype2(dst, ohashget(types, dst)))
+        | convop -> with target(hls0) mk:iop:convop(op, v, gettype(t))
+        | icmp   -> with target(hls0) mk:iop:op(vcond, [lhs;rhs], gettype2(dst, ohashget(types, dst)))
+        | phi    -> with target(hls0) mk:iop:phi(dsts)
+        | select -> with target(hls0) mk:iop:select(vif, vthen, velse)
+        | else   -> ccerror('UNSUPPORTED_INSTRUCTION'(node))};
+       deep irphi : with target(hls0) mk:phiarg:p(dst, value);
+       deep irval {
+           false -> mkconst(0, bit)
+        |  true  -> mkconst(1, bit)
+        |  integer -> mkconst(v, with target(hls0) mk:type:v(ll_get_itype_width(if(itp) car(itp) else 'i1', 'b'(node))))
+        |  undef -> mkundef(gettype(t))
+        |  zero -> mkconst(0, gettype(t))
+        |  var -> with target(hls0) mk:value:reg(nm)
+        |  else -> ccerror('UNSUPPORTED_VALUE'(node))};
+       deep irterm {
+           vret -> with target(hls0) mk:exit:ret()
+        |  br_label -> with target(hls0) mk:exit:br(nm)
+        |  br -> with target(hls0) mk:exit:brc(cnd, tr, fl)
+        |  switch -> with target(hls0) mk:exit:switch(value, els, cases)
+        |  else -> ccerror('UNSUPPORTED_TERM'(node))};
+       deep irswitchdst : with target(hls0) mk:switchdst:d(value, dst);
+       }}}
+
+%%%%%%%%%%%%

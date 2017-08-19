@@ -151,7 +151,7 @@ parser verilog (veriloglex) {
 
    rangeOrType := { integer => integer() }
                /  { real => real() }
-               /  [range]
+               /  { [range]:r => r(r) }
                ;
 
    nameOfFunction := [identifier];
@@ -173,7 +173,7 @@ parser verilog (veriloglex) {
    inputDeclaration "input declaration"
       := input [range]:r? [listOfVariables]:l => input(r,l);
    outputDeclaration "output declaration"
-      := output ([range]:r)? [listOfVariables]:l => output(r,l);
+      := output reg? ([range]:r)? [listOfVariables]:l => output(r,l);
    inoutDeclaration "inout declaration"
       :=inout ([range]:r)? [listOfVariables]:l => inout(r,l);
 
@@ -238,7 +238,9 @@ parser verilog (veriloglex) {
    strength0 := [strengthR0]:v => $sval(v);
    strength1 := [strengthR1]:v => $sval(v);
 
-   range "range" := "[" [constantExpression]:l ":" [constantExpression]:r "]" => r(l,r);
+   range "range" :=
+       { "$" typeof "(" [expression]:e ")" => typeof(e) }
+     / {"[" [constantExpression]:l ":" [constantExpression]:r "]" => r(l,r)};
 
    listOfAssignments := cslist<[assignment],",">:as => as;
 

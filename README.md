@@ -11,8 +11,7 @@ fundamentals of computing and for exploring hardware-software co-design and
 higher-level HDL synthesis.
 
 Default backend ("small1") is a placeholder for experimenting with various future CPU
-designs and compiler backend techniques. There will be many other designs working within
-the same SoC and toolchain infrastructure.
+designs and compiler backend techniques.
 
 The default backend is targeting a toy stack machine, implemented on Spartan6
 FPGAs. Sample SoCs are included for [LogiPi](http://valentfx.com/logi-pi/) and [Digilent Atlys](http://www.digilentinc.com/Products/Detail.cfm?Prod=ATLYS) boards.
@@ -35,7 +34,26 @@ is possible to inline Verilog code into C to seamlessly enhance
 the CPU core functionality, see backends/small1/sw/long_hdltests/test1.c for example.
 
 There is also an experimental HLS engine, allowing to implement custom instructions directly in Clike.
-See backends/small1/sw/hdltests/test6.c (a hardware integer division implementation).
+See [HLS.md](./HLS.md) for more details.
+
+
+There are two other CPU cores included in this project.
+
+One is "tiny1", a very small and extremely slow heavily microcoded core. It fits
+into an iCE40 1k, occupying only about 660 cells, but it relies on block rams to
+host the microcode. There is no C compiler backend for this core, and no support
+for extended instructions.
+
+Another CPU core included is "c2". There is a full featured optimising Clike
+compiler backend for it, as well as a support for extended instructions (and,
+therefore, Verilog inlining and HLS). It's a classic 5-stage RISC core, with no
+caches, relying on having everything in either ROMs or single clock cycle block
+RAMs (i.e., it cannot directly address DDR, unlike Small1). This core is meant
+to be used as a small minion CPU running in a NoC. It is about an order of
+magnitude faster than Small1 but still is relatively simple. There will be a
+more complex version of the same ISA with a support for caches, DDR and
+interrupts, eventually replacing Small1.
+
 
 # BUILDING
 

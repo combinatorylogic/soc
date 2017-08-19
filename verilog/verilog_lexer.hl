@@ -72,7 +72,7 @@ gatetypeR := and / nand / or / nor / xor / xnor / bufif0 / bufif1 /buf / notif0
 
 @BinaryOperatorTk10 := "*"/"/"/"%";
 @BinaryOperatorTk9 := "+"/"-";
-@BinaryOperatorTk8 := "<<"/">>";
+@BinaryOperatorTk8 := ">>>"/"<<"/">>";
 @BinaryOperatorTk7 := "<="/">="/"<"/">";
 @BinaryOperatorTk6 := "==="/"!=="/"!="/"==";
 @BinaryOperatorTk5 := (!"&&" "&")/"~&";
@@ -84,7 +84,7 @@ gatetypeR := and / nand / or / nor / xor / xnor / bufif0 / bufif1 /buf / notif0
 
 
 @BinaryOperatorTk := "+"/"-"/"*"/"/"/"%" /"===" /"==" /"!==" /"!=" /"&&" /"||"
-	/">>" /"<<" /"<=" /"<" /">=" /">" /"&" /"|" /"^~" /"^" ;
+	/">>>"/">>" /"<<" /"<=" /"<" /">=" /">" /"&" /"|" /"^~" /"^" ;
 
 @@DQUOTE := 34;
 @@BSDQUOTE := "\" 34;

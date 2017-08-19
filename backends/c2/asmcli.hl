@@ -1,0 +1,28 @@
+include "asm.hl"
+
+
+function compile(fname) {
+   strm = #(peg:file->stream fname);
+   res = %peg:easyparse3(%peg:makeenv(), peg_c2asmp, strm);
+   match car(res) with
+       'FAIL:'(@x) -> %pfront-report-syntax-error(strm, res)
+    | else -> {
+        src = car(res);
+       <ht:c0> = c2labels(0, src);
+       c = c2macros(c0);
+       s1 = c2exprs(ht, c);
+   
+       out = map append s in s1 do c2encode_entry(s);
+       hex(n) =
+        .net(n): {
+          leave ((Int32)n).ToString("x");
+       };
+       iter o in out do println(hex(o))}}
+
+
+function main()
+{
+  match %a->l( %*CMDLINE* ) with
+     [fn] -> compile(fn)
+}
+

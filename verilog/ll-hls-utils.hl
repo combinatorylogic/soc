@@ -1,0 +1,34 @@
+%literate:
+
+\subsection{Boring utility functions}
+
+\pfcode{
+%"ir2mem:irtype|integer.type -> integer; get type width in bits"
+function ll_get_itype_width(type,orig) {
+   writeline('ITYPE-WIDTH'(type,orig, clike_parse_inttype(type)));
+   match clike_parse_inttype(type) with
+     [w;n] -> n
+   | else -> 1}}
+
+\pfcode{
+function ll_to_hls_gettype(t)
+      visit:ir2mem (irtype:t) {
+         deep irtype {
+            integer -> with target(hls0) mk:type:v(ll_get_itype_width(type, 'a'(node)))
+          | else -> ccerror('UNSUPPORTED_TYPE'(node))}}}
+
+\pfcode{
+function set_intersect(a, b)
+collector(add, get) {
+     ht = mkhash();
+     iter a do ohashput(ht, a, a);
+     iter b do if(ohashget(ht, b)) add(b);
+     return get()}}
+
+\pfcode{
+function set_subst(a, b) {
+  bh = mkhash();
+  iter b in b do ohashput(bh, b, b);
+  return filter a as not(ohashget(bh, a))}}
+
+%%%%%%%%%%%%

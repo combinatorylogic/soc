@@ -3,6 +3,36 @@
 \section{Verilog backend}
 
 \pfcode{
+function ll_to_hls_lower_ashr(top) {
+   gettypewidth(tp) =
+      visit:hls3 /rec/ (type: tp) {
+         once type {
+            v -> bits}};
+   getconstant(v) =
+      visit:hls3 /rec/ (value: v) {
+         once value {
+            const -> v
+          | else -> ccerror('NOT-ALLOWED'())}};
+   mkconst(c) =
+     with target(hls3) {
+        mk:value:const(c, mk:v(32))};
+   visit:hls3 /rec/ (top: top) {
+      deep expr {
+         op -> if (fn === 'AShr') {
+           tpw = gettypewidth(rettype);
+           swdth = getconstant(cadr(args));
+           highbit = tpw - 1;
+           count = swdth;
+           mk:op('compose', [mk:value:e(mk:op('repeat', [mkconst(count);
+                                        mk:value:e(mk:op('range',
+                                            [car(args);mkconst(highbit);
+                                                       mkconst(highbit)], rettype))], rettype));
+                             mk:value:e(mk:op('range', [car(args);mkconst(tpw-1);mkconst(swdth)], rettype))],
+                            rettype)
+         } else node()
+       | else -> node()}}}}
+
+\pfcode{
 function ll_to_hls3_lower_selectchains(top) {
    visit:hls3 /rec/ (top: top) {
       deep selectelt { e -> [c;v] };
@@ -23,28 +53,39 @@ function ll_to_hls_hls3_to_verilog(top0) {
        | 'Sub' -> 'binop':"-"
        | 'NOT' -> 'unop':"!"
        | 'Shl' -> 'binop':"<<"
-       | 'AShr' -> 'binop':">>"
+       | 'AShr' -> 'sbinop':">>>"
        | 'LShr' -> 'binop':">>"
        | 'EQ' -> 'binop':"=="
        | 'NE' -> 'binop':"!="
        | 'SGE' -> 'sbinop':">="
+       | 'SGT' -> 'sbinop':">"
        | 'SLT' -> 'sbinop':"<"
        | 'SLE' -> 'sbinop':"<="
        | 'And' -> 'binop':"&"
+       | 'Or' -> 'binop':"|"
+       | 'ZExt' -> 'convop':op
+       | 'Trunc' -> 'convop':op
+       | 'compose' -> 'compose':op
+       | 'range' -> 'range':op
+       | 'repeat' -> 'repeat':op
        | else -> 'nope':""
    };
    mkop(op, args, t) = {
       <cls:sym> = classop(op);
        match cls with
-          'binop' -> ["(";car(args); ")"; sym; "(";cadr(args); ")"]
-        | 'sbinop' -> ["$signed(";car(args); ")"; sym; "$signed(";cadr(args); ")"]
+          'binop' -> ["("; car(args); ") "; sym; "  (";cadr(args);")"]
+        | 'sbinop' -> ["$signed(";car(args); ") "; sym; " $signed(";cadr(args); ")"]
         | 'unop' -> [sym; "("; car(args); ")"]
-        | 'conv' -> car(args)
+        | 'convop' -> car(args) // TODO: proper z-ext
+        | 'compose' -> ["{"; interleave(args, ", "); "}"]
+        | 'repeat' -> ["{"; car(args); "{"; cadr(args) ; "}}"]
+        | 'range' -> [car(args); "["; cadr(args); ":"; caddr(args); "]"]        
         | else -> [s(op); "(...)"]
    };
    visit:hls3 /rec/ (top: top) {
       deep modarg {
          ain -> ["input "; tp; " "; s(nm)]
+       | aoutreg -> ["output reg "; tp; " "; s(nm)]
        | aout -> ["output "; tp; " "; s(nm)]};
       deep modentry {
          register -> ["reg "; t; " "; s(nm); ";"; 'FORCECR']
@@ -65,8 +106,17 @@ function ll_to_hls_hls3_to_verilog(top0) {
                  ".writeaddr1("; writeaddr1; "),";'FORCECR';
                  ".writein1("; writein1; "),";'FORCECR';
                  ".we("; we; ")";'POP';");"; 'FORCECR']
+       | inst -> ['FORCECR';
+                  %S<<("hls_", fn);
+                  // TODO: parameters
+                  " "; s(id); " ("; 'PUSHSTOP';
+                  @interleave(map p in ps do p, [", ";'FORCECR']);
+                  'POP';
+                  ");"; 'FORCECR']
        | else -> [] // TODO!
       };
+      deep instport {
+         p -> [".";s(nm);"(";v;")"]};
       deep case {
          d -> [v; ": "; 'PUSHSTOP'; s; 'POP']};
       deep stmt {
@@ -74,6 +124,7 @@ function ll_to_hls_hls3_to_verilog(top0) {
                     tr; 'FORCECR';
                  'TABBACK';"else"; 'FORCECR';
                     fl; 'POP'; 'FORCECR']
+       | display -> [%S<<("$display(\"", text, "\", "); interleave(args, ", "); ");"]
        | set -> [s(reg); " <= "; v; ";"; 'FORCECR']
        | switch -> ["case ("; id; ")"; 'PUSHTAB'; 'FORCECR';
                        interleave(cs, ['FORCECR']);
@@ -86,8 +137,8 @@ function ll_to_hls_hls3_to_verilog(top0) {
        | else -> "..." };
       deep expr {
          v -> v
-       | op -> mkop(fn, args, [])
-       | convop -> mkop(fn, args, t)
+       | op -> mkop(fn, args, rettype)
+       | convop -> mkop(fn, [arg], t)
        | select -> ["("; cnd; ")?"; "(";tr;"):("; fl;")"]
        | selectchain -> ccerror('IMPOSSIBLE'())
        | load_commit -> ["/* LOAD_COMMIT "; s(mem); ", "; s(reg); " */"]
@@ -112,75 +163,42 @@ function ll_to_hls_hls3_to_verilog(top0) {
                 es;
              'POP'; 'FORCECR';
              "endmodule"; 'FORCECR']}}}}
+\pfcode{
+define hls_ll_env = ll_mk_env(hls_select_passes)
+}
 
 \pfcode{
-
-function inline_wrapper_body(path, fnm, args)
-symbols(pfx) {
-   isptr(tp) = visit:ir2 (irtype: tp) {once irtype {pointer -> true|else -> []}};
-   inputs = map append [tp;nm] in args do
-              if(isptr(tp)) [] else [nm];
-   returns = map append [tp;nm] in args do
-              if(isptr(tp)) [nm] else [];
-   argpairs0 = do loop(i = inputs) {
-      match i with
-        [a;b;@rest] -> [a;b]:loop(rest)
-      | [a] -> [[a]]
-      | else -> []};
-  <lastpair:argpairs> = argpairs0;
-   cbody = #`(begin (expr (inline (void) () (verilog (usemodule ,(S<< path "/" fnm ".v")))))
-                   (expr (inline (void) ()
-                        (verilog (instance ,fnm
-                                          ((bind REQ (reg  ,(Sm<< pfx "_req")))
-                                           (bind ACK (wire ,(Sm<< pfx "_ack")))
-                                           ,@=pf: map [tp;nm] in args do {
-                                                    if (isptr(tp)) #`(bind ,nm (wire ,(Sm<< pfx "_" nm)))
-                                                          else     #`(bind ,nm (reg  ,(Sm<< pfx "_" nm)))
-                                                                   })))))
-
-                   ,@=pf: map ap in argpairs do
-                        #`(expr (inline (void) (,@(foreach-map (a ap) `(var ,a)))
-                                         (verilog (execop (args ,@(foreach-map (a ap) `(arg ,a)))
-                                              (,@=pf: map a in ap do #`(nonblocking (var ,(Sm<< pfx "_" a)) (var ,a)))
-                                              (noreturn)
-                                              ))))
-                                               
-                   ,=pf: {ap = lastpair;
-                              #`(expr (inline (void) (,@(foreach-map (a ap) `(var ,a)))
-                                         (verilog (execop (args ,@(foreach-map (a ap) `(arg ,a)))
-                                              (,@=pf: map a in ap do #`(nonblocking (var ,(Sm<< pfx "_" a)) (var ,a))
-                                               (nonblocking (var ,(Sm<< pfx "_req")) (number "1")))
-                                            (wait (var ,(Sm<< pfx "_ack"))
-                                                 ((nonblocking (var ,(Sm<< pfx "_req")) (number "0")))
-                                               (else
-                                                 ((nonblocking (var ,(Sm<< pfx "_req")) (number "0")))))))))}
-                   ,@=pf: map r in returns do
-                      #`(set () (deref (var ,r))
-                           (inline (integer i32) () (verilog (execop (noargs) () (return (var ,(Sm<< pfx "_" r)))))))
-                  );
-   cargs = map [tp;nm] in args do {
-      if (isptr(tp))
-                ['ptr'('integer'('i32'));'v'(nm)]
-           else ['integer'('i32');'v'(nm)]
-   };
-   return clike_compile_code([], clike_local_env(clike_global_env(), cargs), cbody, 'void'(), 'void'())
+function ll_genssa_alt_opt(globenv, llenv, src, addpragma) {
+   g2 = ll_to_genssa2(src);
+  <g3ht:g3> = genssa2_process(llenv, globenv, g2);
+   g4 = genssa2_to_ll(src, g3, g3ht);
+   g0 = genssa2_loops(g3);
+   g5 = ll_clean_pragmas(addpragma, g4);
+   return g0:g3ht:g5
 }}
-
+ 
 \pfcode{
-function prep_hls(env, path, fn, fnm) {
+function prep_hls(env, path, fn, fnm) collector(addpragma, getpragmas) {
+  ohashput(hls_ll_env, '*debug-compiler-ssa*', 1);
+  ohashput(hls_ll_env, '*debug-compiler-ssa-timing*', 1);
   // 1. Run the HLS compiler backend for this function and generate
   //    a Verilog module (current path + function name ".v")
-  <g2tp:g2> = ll_genssa_opt(env, fn);
-  g3 =  ll_to_hls_driver(g2);
+ <loops:g2tp:g2> = ll_genssa_alt_opt(env, hls_ll_env, fn, addpragma);
+  pragmas = getpragmas();
+  if(pragmas) println('PRAGMAS:'(@pragmas));
+  g3 =  ll_to_hls_driver(g2, pragmas, loops);
+  g3x = g3;// ll_to_hls_lower_ashr(g3);
   %call-with-output-file(%S<<(fnm, ".v"), fun(fout)
-         %generic_pprint:pprint(ll_to_hls_hls3_to_verilog(g3), fun(x) fprint(fout, x)));
+         %generic_pprint:pprint(ll_to_hls_hls3_to_verilog(g3x), fun(x) fprint(fout, x)));
 
   // 2. Generate an inline interface function with the same name and pass
   //    it back to the Small1 backend.
   ret = visit:ir2(irtoplevel: fn) {
     once irtoplevel {
       %function -> {
-         cbody = inline_wrapper_body(path, fnm, args);
+         cbody = if (filter cc as match cc with 'nowrap'() -> true)
+                      inline_wrapper_dummy(path, fnm, args)
+                 else inline_wrapper_body(path, fnm, args);
          nbody =  map r in cbody do ir0_ir2_bblock(r);
          mk:node(cc = [], annotations = ['inline'()], body =  nbody)}
       |  else -> ccerror('WHAT'(fn))}};

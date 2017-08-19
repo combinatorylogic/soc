@@ -37,6 +37,9 @@ void _custom0_0(int32 cmd);
 int32 _custom0_1(int32 cmd);
 int32 _custom1_1(int32 cmd, int32 x);
 int32 _custom2_1(int32 cmd, int32 x, int32 y);
+void _custom2_0b(int32 cmd, int32 x, int32 y);
+void _custom1_0b(int32 cmd, int32 x);
+void _custom0_0b(int32 cmd);
 
 // Todo: implement it as a special instruction?
 inline int32 *__jumptable_clamp(int32 v, int32 l, int32 r)

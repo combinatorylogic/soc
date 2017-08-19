@@ -1,0 +1,105 @@
+This core is designed to work with ROMs or block RAMs on an FPGA, and therefore expects 1 clock cycle memory
+latency. It simplifies everything greately, with pipeline stalls only happening for the complex synchronous
+extension instructions.
+
+
+ISA encoding:
+
+Type A:   0 [ 0 0 X X X X ] [7:11 - DSTRG] [12:16 - SRCR1] [17:21 - SRCR2] [22:31 - 10xIMMED] - ALU+writeback
+Type B:   1 [ 0 0 ] [3:31 - 29xIMMED] - CALL/RET/JUMP (abs) - delay slots = 1
+          1 [ 0 1 ] [3:31 - 29xSIMMED] - JUMP (rel) - delay slots = 1
+          1 [ 1 0 ] [3:7 - SRCR1] [8:31 - 24xSIMMED] - CJUMP - delay slots = 2
+          1 [ 1 1 ] [3:7 - SRC$1] [8:12 - SRCR2] [13:31 IMMED] - CIJUMP - delay slots = 2
+Type I:   0 [ 1 ] [2:6 - DSTRG] [7:31 - 25xSIMMED] - LDIMMED
+
+Type E:   0 [ 0 0 1 1 1 1 ] [7:11 - DSTRG] [12:16 - SRCR1] [17:21 - SRCR2] [22:31 - 10xEXTCODE] - invoke an
+    extended instruction
+Type EE:  0 [ 0 0 1 1 1 1 ] [7:11 - DSTRG] [12:16 - SRCR1] [17:21 - SRCR2] [22:31 - 10x 1] - EXTCODE is in the
+    next instruction [9:0], and [31:10] can be used for the extended immediate or whatever else
+
+    EXTCODE[0] == 1 - stall the pipeline until the WAIT condition is released
+    EXTCODE[0] == 0 - instruction is asyncronous, no need to stall the pipeline automatically (though
+                       the custom code can still do it).
+
+Type M:   0 [ 0 1 0 0 ] [5:9 - DSTRG] [10:14 - SRCR2] [15:31 - SIMMED] - LOAD MEM[R2+SIMMED] to DST
+          0 [ 0 1 0 1 ] [5:9 - SRCR1] [10:14 - SRCR2] [15:19 - DSTRG] - LOAD MEM[R2+R1] to DST (DISABLED!)
+          0 [ 0 1 1 0 ] [5:9 - SRCR1] [10:14 - SRCR2] [15:31 - SIMMED] - MEM[R2+SIMMED] <- R1
+          0 [ 0 1 1 1 ] [5:9 - SRCR1] [10:14 - SRCR2] [15:31 - SIMMED] - MEM[R2] <- R1; R2 += SIMMED
+
+Reg mapping:
+   R0 = 0   (hardwired)
+   R1 = 1   (hardwired)
+
+   R2 .. R28 - general purpose, with R2 being used as a function return value
+
+   R29 = SP (ABI convention)
+   R30 = FP (ABI convention)
+   R31 = PC (hardwired, not in the reg file)
+
+Type A opcodes:
+   0: NOP // disables writeback
+   1: AND
+   2: ADD (+SIMMED)
+   3: SUB (+SIMMED)
+   4: OR
+   5: NOT // R2 ignored
+   6: SHL // optional barrel shifter, alternatively only supports shift by 1
+   7: SHR // optional barrel shifter, alternatively only supports shift by 1
+   8: XOR
+   9: EQ // if immediate != 0, compare Ra with immediate
+  10: NE // if immediate != 0, compare Ra with immediate
+  11: CMP // all other comparisons, immediate encodes the comparison type:
+      0 - SLT
+      1 - SGT
+      The rest is optional, core may not implement them:
+      2 - SLE
+      3 - SGE
+      4 - ULT
+      5 - UGT
+      6 - ULE
+      7 - UGE
+  12: ASHR
+  13: ---
+  14: ---
+  15: SELECT // if a previous instruction destination is R0, use the writeback in flight as
+             // a condition to select Ra or Rb
+  
+CALL/RET:
+
+  If the core is configured to support microops, an absolute jump is a CALL instruction and jump to address 0 is
+   a RET instruction.
+      CALL sequence is following:
+          (storei SP SP (const -1))
+ 	  (storei SP FP (const -1))
+ 	  (storei SP PC (const -1))
+ 	  (jmp ...)
+
+      RET sequence is following:
+          (load SP FP (const 3))
+	  (load SC FP (const 1))
+ 	  (load FP FP (const 2))
+ 	  (jmpci R1 SC (const 2))
+
+
+
+  Pushing on a stack:
+     - STOREI V, SP, #-1
+
+  Popping from stack:
+     - LOAD Rx, SP, #1
+     - ADD  R0, SP, SP, #1
+     
+     
+Extensions:
+
+  - Extension instructions can have one of two types:
+     - Simple: its code is added to the EXEC stage;
+     - Multi-stage:
+          - Instruction stalls the pipeline until the multi-stage FSM is done working
+          - At a DECODE stage, an EXEC FSM stage is triggered, which potentially can lead to more WAIT stages,
+            ending up in IDLE again. Pipeline is unstalled once FSM is IDLE and the result of the instruction
+            currently at EXEC stage is taken from the FSM result register.
+
+  - Complex extension instructions can be asynchronous or pipelined - they issue new input into an instruction
+      module pipeline and the results must be harvested after N clock cycles (e.g., using another simple
+      extension instruction).

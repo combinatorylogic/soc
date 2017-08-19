@@ -1,24 +1,26 @@
 #(ctimex (define debug-display-include-paths #t))
-#(usedll CLikeSCore)
+#(ctimex (define compiler-optimise-cache nil))
+#(usedll CCSmall1)
 
 include "./clike/backend/ll-ast.hl"
-litinclude  ("./doc/ll-hls") "./verilog/ll-hls.hl"
 
-litinclude ("./doc/inline") "./verilog/inline.hl"
-litinclude ("./doc/emit") "./backends/small1/emit.hl"
+litinclude ("./doc/emit") "./backends/c2/emit.hl"
 
-define small1_cmdline_imul = mkref(true);
+define cmdline_imul = mkref(true)
+define arch = mkref('small1')
 
 function prepare(env, mdl) {
  visit:ir2(irmodule: mdl) {
       deep irtoplevel {
           %function -> if (body) {
-             match cc with
-               ['hls'()] -> prep_hls(env, %generic-filepath("."), node, name)
-             | else -> 
-                 if (deref( %llvm-optimise )) {
+             if (filter cc as match cc with 'hls'() -> true)
+                 prep_hls(env, %generic-filepath("."), node, name) // TODO: pass ^arch here
+             else if (deref( %llvm-optimise )) {
                    <g2tp:g2> = ll_genssa_opt(env, node);
-                 return g2} else node
+                    // Do it here for now, later the backend may want to see some
+                    //  pragmas too.
+                    g3 = ll_clean_pragmas(fun(x) [], g2);
+                 return g3} else node
            } else node
        |  else -> node}}}
 
@@ -26,7 +28,7 @@ function ir2backend_small1(mdl, fnm)
 {
  try {
   try {
-    small1_enable_mul := ^small1_cmdline_imul;
+    small1_enable_mul := ^cmdline_imul;
     ir2mdl = map m in mdl do %ir0->ir2(m);
     p1 = ir2_bodypass(ir2mdl, il2ssa_fullssa);
     px = prepare(ll_module_types(ir2mdl), p1);
@@ -43,9 +45,33 @@ function ir2backend_small1(mdl, fnm)
  }
 }
 
+function ir2backend_c2(mdl, fnm)
+{
+ try {
+  try {
+    ir2mdl = map m in mdl do %ir0->ir2(m);
+    p1 = ir2_bodypass(ir2mdl, il2ssa_fullssa);
+    px = prepare(ll_module_types(ir2mdl), p1);
+    p2 = c2_driver_mdl(px,fnm);
+    return p1
+  } catch (t_MBaseException e) {
+    println(mbaseerror(e));
+    println(%->s(e));
+    exit(-1);
+  }
+ } catch (t_Exception e) {
+   println(%->s(e));
+   exit(-1)
+ }
+}
+
 function clike_compile_files(mdname, fls)
 {
   nollvm = true;
+  {match ^arch with 
+      'small1' -> ir2backend_hook := ir2backend_small1
+    | 'c2' -> ir2backend_hook := ir2backend_c2
+    | else -> ccerror('UNKNOWN-ARCH'(^arch))};
   mdl = llvm_init_module(mdname);
   env = clike_global_env();
   %read-int-eval('define'('clike-current-env',#`(quote ,env)));
@@ -66,12 +92,13 @@ collector(fadd,fget) {
  %read-int-eval(#'(n.module clikeccrepl dll));
  mname = mkref("test");
  %llvm-optimise := true;
- ir2backend_hook := ir2backend_small1;
  do loop(a = %a->l( %*CMDLINE* )) {
     match a with
       ["/out";mdlname;@rest] -> {mname := mdlname;loop(rest)}
-    | ["/imul";@rest] -> {small1_cmdline_imul := true; loop(rest)}
-    | ["/noimul";@rest] -> {small1_cmdline_imul := []; loop(rest)}
+    | ["/arch";archname;@rest] -> {arch := %Sm<<(archname); loop(rest)}
+    | ["/imul";@rest] -> {cmdline_imul := true; loop(rest)}
+    | ["/noimul";@rest] -> {cmdline_imul := []; loop(rest)}
+    | ["/c2ram";n;@rest] -> {c2_ram_end := %S->N(n); loop(rest)}
     | ["/d";dllname;@rest] -> {%read-compile-eval('usedll'(%Sm<<(dllname)));
                                loop(rest);}
     | ["/o+";@rest] -> { %llvm-optimise := true; loop(rest)}
@@ -89,6 +116,7 @@ collector(fadd,fget) {
                ["Usage: clikecc [option...] file.c...";
                 "Options:";
                 "   /out <modulename>   : save bitcode to a given module";
+                "   /arch small1|c2     : select target CPU";
                 "   /imul               : enable IMUL and the other extended instructions";
                 "   /noimul             : disable IMUL and the other extended instructions";
                 "   /d   <dllname>      : load a given MBase dll";

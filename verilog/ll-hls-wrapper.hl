@@ -1,0 +1,68 @@
+% literate:
+
+
+\pfcode{
+
+function inline_wrapper_body(path, fnm, args)
+symbols(pfx) {
+   isptr(tp) = visit:ir2 (irtype: tp) {once irtype {pointer -> true|else -> []}};
+   inputs = map append [tp;nm] in args do
+              if(isptr(tp)) [] else [nm];
+   returns = map append [tp;nm] in args do
+              if(isptr(tp)) [nm] else [];
+   argpairs0 = do loop(i = inputs) {
+      match i with
+        [a;b;@rest] -> [a;b]:loop(rest)
+      | [a] -> [[a]]
+      | else -> []};
+  <lastpair:argpairs> = argpairs0;
+   cbody = #`(begin (expr (inline (void) () (verilog (usemodule ,(S<< path "/" fnm ".v")))))
+                   (expr (inline (void) ()
+                        (verilog (instance ,fnm
+                                          ((bind REQ (reg  ,(Sm<< pfx "_req")))
+                                           (bind ACK (wire ,(Sm<< pfx "_ack")))
+                                           ,@=pf: map [tp;nm] in args do {
+                                                    if (isptr(tp)) #`(bind ,nm (wire ,(Sm<< pfx "_" nm)))
+                                                          else     #`(bind ,nm (reg  ,(Sm<< pfx "_" nm)))
+                                                                   })))))
+
+                   ,@=pf: map ap in argpairs do
+                        #`(expr (inline (void) (,@(foreach-map (a ap) `(var ,a)))
+                                         (verilog (execop (args ,@(foreach-map (a ap) `(arg ,a)))
+                                              (,@=pf: map a in ap do #`(nonblocking (var ,(Sm<< pfx "_" a)) (var ,a)))
+                                              (noreturn)
+                                              ))))
+                                               
+                   ,=pf: {ap = lastpair;
+                              #`(expr (inline (void) (,@(foreach-map (a ap) `(var ,a)))
+                                         (verilog (execop (args ,@(foreach-map (a ap) `(arg ,a)))
+                                              (,@=pf: map a in ap do #`(nonblocking (var ,(Sm<< pfx "_" a)) (var ,a))
+                                               (nonblocking (var ,(Sm<< pfx "_req")) (number "1")))
+                                            (wait (var ,(Sm<< pfx "_ack"))
+                                                 ((nonblocking (var ,(Sm<< pfx "_req")) (number "0")))
+                                               (else
+                                                 ((nonblocking (var ,(Sm<< pfx "_req")) (number "0")))))))))}
+                   ,@=pf: map r in returns do
+                      #`(set () (deref (var ,r))
+                           (inline (integer i32) () (verilog (execop (noargs) () (return (var ,(Sm<< pfx "_" r)))))))
+                  );
+   cargs = map [tp;nm] in args do {
+      if (isptr(tp))
+                ['ptr'('integer'('i32'));'v'(nm)]
+           else ['integer'('i32');'v'(nm)]
+   };
+   return clike_compile_code([], clike_local_env(clike_global_env(), cargs), cbody, 'void'(), 'void'())
+}}
+
+\pfcode{
+function inline_wrapper_dummy(path, fnm, args)
+symbols(pfx) {
+   cbody = #`(begin (expr (inline (void) () (verilog (usemodule ,(S<< path "/" fnm ".v"))))));
+   cargs = map [tp;nm] in args do {
+                ['integer'('i32');'v'(nm)]
+   };
+   return clike_compile_code([], clike_local_env(clike_global_env(), cargs), cbody, 'void'(), 'void'())
+}}
+
+
+%%%%%%%%%%

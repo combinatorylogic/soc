@@ -1,0 +1,80 @@
+% literate:
+
+
+\section{A dirty hack in an absense of our own CLP(FD) engine}
+
+N.B.: this engine may infer longer delays for the "after" rules. The output requires
+an additional post-processing step which may insert proxy variables for such unfortunate cases.
+
+\pfcode{
+ast clpfd0 recform {
+   expr = after(var:a, var:b, number:n)
+        | depends(var:a, var:b)
+        | ordered(var:a, var:b)
+        | exclusive(var:a, var:b)
+        | entry(var:a)
+        ;
+   code = c(.*expr:es);
+}}
+
+\pfcode{
+function printeqs_clpfd(c)
+   visit:clpfd0 /rec/ (code: c) {
+     deep code { c -> strinterleave(es,",\n   ") };
+     deep expr {
+        after -> %S<<("after(",a,",",b,",",n,")")
+      | depends -> %S<<("depends(",a,",",b,")")
+      | ordered -> %S<<("ordered(",a,",",b,")")
+      | exclusive -> %S<<("exclusive(",a,",",b,")")
+      | entry -> %S<<("  ",a,"  #=  0")}}}
+
+\pfcode{
+function pprint_clpfd(c) {
+   getvars(c) = {
+      ht = mkhash();
+      visit:clpfd0 /rec/ (code: c) {
+         once var: ohashput(ht, thisnodesrc(), 1)};
+      return hashmap(fun(k,v) k, ht)};
+   vars = getvars(c);
+   svars = map v in vars do %S<<(v);
+   svarslist = strinterleave(svars, ", ");
+   inner = %S<<(
+      "generate(Vars) :- \n",
+      "   Vars = [", svarslist, "], \n",
+      "   [", svarslist, "] ins 0..100,\n",
+      printeqs_clpfd(c),
+      ",labeling([",
+         strinterleave(map v in vars do %S<<("min(",v,")"), ","),
+      "], [", svarslist, "]).\n");
+
+   outer = ":- use_module(library(clpfd)).
+
+after(A, B, N) :- A #>= B + N.
+depends(A, B) :- A #>= B.
+ordered(A, B) :- A #> B.
+exclusive(A, B) :- dif(A, B).
+";
+   footer = "?- generate(Vars), print(Vars), halt(0).";
+
+   return vars:%S<<(outer, inner, footer)
+}}
+
+\pfcode{
+parser clpfdout (pfront) {
+   !!Spaces;
+   clpfdout := "[" ecslist<[number],",">:es "]" [Spaces]* => es;}}
+
+\pfcode{
+function run_clpfd(c0)
+if(c0) {
+    tmp(s) = %ast2:from-listform(clpfd0, code, s);
+    c = tmp('c'(@c0));
+   <vars:code> = pprint_clpfd(c);
+    %call-with-output-file("tmpfile.pl", fun(f) fprintln(f, code));
+    // TODO
+    collector(add, get) {
+       system("swipl", "-s tmpfile.pl", add);
+       l = car(lasttail(get()));
+       return zip(vars, parse l as clpfdout)}}}
+
+%%%

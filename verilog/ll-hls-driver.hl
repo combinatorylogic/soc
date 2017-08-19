@@ -1,0 +1,360 @@
+%literate:
+
+\subsection{Driver}
+
+
+\pfcode{
+function ll_to_hls_lower_fsm(top) {
+  dofsmbody(stagereg, tp, ssmap, body) = {
+     dofsmstage(thisstage, s) = {
+       visit:hls3 /rec/ (stmt: s) {
+          deep stmt {
+             goto -> mk:set(stagereg, mk:v(mk:const(ohashget(ssmap, stage), tp)))
+           | load_start -> mk:stmt:load_start_x(stagereg = stagereg, stage=thisstage)
+           | store -> mk:stmt:store_x(stagereg = stagereg, stage=thisstage)
+           | else -> node()}}};
+     visit:hls3 /rec/ (case: body) {
+        once case {
+           d -> mk:node(s = dofsmstage(v, s))}}};
+  bit = with target (hls3) {mk:type:v(1)};
+ <outputsht:ntop> = ll_to_hls_extend_outputs(top);
+  visit:hls2 /rec, dst hls3/ (top: ntop) {
+     deep top {
+        module -> mk:module(args = [mk:ain('clk',bit);
+                                    mk:ain('reset',bit);
+                                    @args],
+                            es = map append es do es)};
+     deep fsmstage {
+        stage -> [name;
+                  fun(idx, tp) {
+                    mk:case:d(mk:const(idx,tp), mk:begin(body))}]};
+     deep modentry {
+        xfsm -> collector(addm, getm) {
+                  stagereg = gensym();
+                  ssmap = mkhash();
+                  iter [nm;body] in ss count i do
+                               ohashput(ssmap, nm, i);
+                  nstages = length(ss);
+                  nbits = /*TODO!!!*/ 32;
+                  nbitstp = mk:type:v(nbits);
+                  addm(mk:modentry:register(nbitstp, stagereg));
+
+                  fsmreset = mk:stmt:begin([
+                                  mk:set(stagereg, mk:v(mk:const(0, nbitstp)));
+                                  reset
+                             ]);
+                  fsmbody = map [nm;body] in ss do
+                                dofsmbody(stagereg, nbitstp, ssmap,
+                                          body(ohashget(ssmap, nm), nbitstp));
+                  ret = mk:modentry:always(
+                              mk:if(mk:op('NOT',[mk:reg('reset')], mk:v(32)),
+                                    fsmreset,
+                                    mk:switch(mk:v(mk:reg(stagereg)), mk:begin([]),
+                                              fsmbody)
+                                    ));
+                  return [@getm(); ret]}
+      | xpipeline ->
+          [mk:modentry:always(
+             mk:if(mk:op('NOT',[mk:reg('reset')], mk:v(32)),
+                                     reset, body))]
+      | special ->
+          ll_to_hls_unroll_enqueue(outputsht, v)
+      | else -> [node()]};
+  }}}
+
+
+\pfcode{
+function ll_to_hls_lower_mems(aenv, top) {
+  // 1. Collect allocas from the *RAMS* list.
+  //    Lift the address, value and WE wires.
+  //    Lift the ram instances
+  rs = map append r in ohashget(aenv, '*RAMS*') do
+          match r with
+             [id; alloca(tp, sz)] -> [[id; sz; ll_to_hls_gettype(tp)]]
+           | else -> [];
+  i32 =  with target (hls3) {mk:type:v(32)};
+  ramsh = mkhash();
+  getsize(t) = visit:hls3 /rec/ (type: t) {once type { v -> bits }};
+  newtops = collector(addelt, getelts) {
+    iter [id;sz;w] in rs do with target (hls3) {
+       readaddr1 = gensym();
+       readout1 = gensym();
+       writeaddr1 = gensym();
+       writein1 = gensym();
+       we = gensym();
+       ohashput(ramsh, id, [[w; i32]; [readaddr1; readout1]; [writeaddr1; writein1]; we]);
+       addelt(mk:modentry:wire(w, readout1));
+       addelt(mk:modentry:wire(w, writein1));
+       // TODO: calculate address bit width
+       addelt(mk:modentry:wire(i32, readaddr1));
+       addelt(mk:modentry:wire(i32, writeaddr1));
+       addelt(mk:modentry:wire(mk:v(1), we));
+       addelt(mk:modentry:ram(id, getsize(w), sz,
+                     mk:reg(readaddr1),
+                     mk:reg(readout1),
+                     mk:reg(writeaddr1),
+                     mk:reg(writein1),
+                     mk:reg(we)));
+    };
+    return getelts()};
+  // 2. Collect _start operations, assuming there is only one in each fsm stage.
+  collectstarts(t) = collector(addx, getx) {
+     visit:hls3 /rec/ (top: t) {
+        deep stmt {
+             load_start_x -> addx('load'(stagereg, stage, mem, reg, off))
+           | store_x -> addx('store'(stagereg, stage, mem, idx, v))
+           | else -> []}};
+     return getx()};
+  ss = collectstarts(top);
+  ramaddrs = mkhash(); ramwes = mkhash();
+  newtops1 = collector(addt, getts) {
+     iter r in ss do with target(hls3) {
+       match r with
+          load(stagereg, stage,mem,reg, off) -> {
+            <[[w; wa]; [readaddr1; readout1]; [writeaddr1; writein1]; we]> = ohashget(ramsh, mem);
+             addt(mk:modentry:wire(wa, reg));
+             addt(mk:modentry:assign(reg, mk:e(off)));
+             ohashput(ramaddrs, mem, [stagereg;stage;reg]:ohashget(ramaddrs, mem));
+          }
+        | store(stagereg, stage, mem, idx, v) -> {
+            <[[w; wa]; [readaddr1; readout1]; [writeaddr1; writein1]; we]> = ohashget(ramsh, mem);
+             reg = %Sm<<(gensym(), "_", mem);
+             regaddr = %Sm<<(reg, "_addr");
+             regvin  = %Sm<<(reg, "_vin");
+             addt(mk:modentry:wire(wa, regaddr));
+             addt(mk:modentry:wire(w, regvin));
+             addt(mk:modentry:assign(regaddr, mk:e(idx)));
+             addt(mk:modentry:assign(regvin, mk:e(v)));
+             ohashput(ramwes, mem, [stagereg; stage;regaddr;regvin]:ohashget(ramwes, mem))}};
+     return getts()};
+  // 3. Lift the assign statements mux-ing addresses and values on the FSM stages.
+  newtops2 = collector(addt, getts) {
+     hashiter(fun (mem, xs) with target(hls3) {
+                rs = map [stagereg;stage;reg] in xs do {
+                   mk:selectelt:e(
+                    mk:value:e(mk:expr:op('EQ', [mk:reg(stagereg);stage], mk:v(32))),
+                    mk:value:reg(reg))};
+               <[[w; wa]; [readaddr1; readout1]; [writeaddr1; writein1]; we]> = ohashget(ramsh, mem);
+                addt(mk:modentry:assign(readaddr1, mk:value:e(mk:selectchain(rs))))
+              }, ramaddrs);
+     return getts()};
+  newtops3 = collector(addt, getts) {
+       hashiter(fun (mem, xs) with target(hls3) {
+                   bit = mk:type:v(1);
+                   zeroop = mk:selectelt:e(mk:const(1, bit), mk:const(0, bit));
+                   rs0 = map [stagereg; stage; regaddr; regvin] in xs do {
+                           op = mk:value:e(mk:expr:op('EQ', [mk:reg(stagereg);stage], mk:v(32)));
+                           [mk:selectelt:e(op, mk:value:reg(regaddr));
+                            mk:selectelt:e(op, mk:value:reg(regvin));
+                            mk:selectelt:e(op, mk:const(1, bit))]};
+                   rs = map [a;b;c] in rs0 do a;
+                   vs = map [a;b;c] in rs0 do b;
+                   ws = map [a;b;c] in rs0 do c;
+                  <[[w; wa]; [readaddr1; readout1]; [writeaddr1; writein1]; we]> = ohashget(ramsh, mem);
+                   addt(mk:modentry:assign(writeaddr1, mk:value:e(mk:selectchain(rs))));
+                   addt(mk:modentry:assign(writein1,   mk:value:e(mk:selectchain(vs))));
+                   addt(mk:modentry:assign(we,         mk:value:e(mk:selectchain(ws::[zeroop]))))},
+                ramwes);
+     return getts()};
+  // TODO: same shit for the stores
+  
+  // 4. Rewrite the rest, removing all the _start operations and replacing _commits with
+  //    the corresponding output wires.
+  visit:hls3 /rec/ (top: top) {
+     deep top {
+        // TODO: reorder, add after all the existing wires
+        module -> mk:node(es = newtops ::  newtops1 ::  newtops2 :: newtops3 :: es)};
+     deep stmt {
+        load_start_x -> mk:nop()
+      | store_x -> mk:nop()
+      | else -> node()};
+     deep expr {
+        load_commit -> {
+          <[[w; wa]; [readaddr1; readout1]; [writeaddr1; writein1]; we]> = ohashget(ramsh, mem);
+           return mk:v(mk:reg(readout1))}
+      | else -> node()}}}}
+
+\pfcode{
+function ll_to_hls3_lower_insts(top) {
+   // Extract all the op_start statements and replace them with module instances.
+   // Replace all the op_commit expressions with dummy wires.
+   getinsts() =
+    collector(add, get) {
+      visit:hls3 /rec/ (top: top) {
+         deep stmt {
+            op_start ->
+               add('op'(inst, fn, cycles, args, tp))
+          | else -> []}};
+      return get()};
+   insts = getinsts();
+   collector(addwire, getwires)
+   collector(addinst, getinsts)
+    { with target (hls3) {
+      iter 'op'(inst, fn, cycles, args, tp) in insts do {
+         addwire(mk:modentry:wire(tp, %Sm<<(inst, "_out")));
+         addinst(
+            mk:modentry:inst(inst, fn, [],
+                          [mk:instport:p('clk', mk:v(mk:reg('clk')));
+                           mk:instport:p('reset', mk:v(mk:reg('reset')));
+                           @map a in args count i do {
+                             mk:instport:p(%Sm<<("p", i), a)
+                            };
+                           mk:instport:p('out', mk:v(mk:reg(%Sm<<(inst, "_out"))))]))}};
+     newwires = getwires();
+     newinsts = getinsts();
+     visit:hls3 /rec/ (top: top) {
+       deep top {
+          module -> mk:node(es = newwires :: es :: newinsts)};
+       deep expr {
+          op_commit -> mk:v(mk:reg(%Sm<<(inst, "_out")))
+        | else -> node()};
+       deep stmt {
+          op_start -> mk:nop()
+        | else -> node()}}}}}
+
+\pfcode{
+function ll_to_hls3_sort_decls(top) {
+  // Move all the regs and wires above all the assignments, rams and always
+  collector(addregwire, getregwires)
+  collector(addram, getrams)
+  collector(addass, getass)
+  collector(addother, getothers) {
+    visit:hls3 /rec/ (top: top) {
+      deep top {
+         module -> mk:node(es = getregwires() :: getrams() :: getass() :: getothers())};
+      deep modentry {
+         register -> addregwire(node())
+       | wire -> addregwire(node())
+       | assign -> addass(node())
+       | ram -> addram(node())
+       | else -> addother(node())}}}}}
+
+
+\pfcode{
+function ll_to_hls_pragma_function(fn, bb, args) {
+   if (fn === '_pragma_hls_pipeline') {
+     stepid = (match car(args) with
+                  'var'(id) -> id
+                | x -> ccerror('WRONG_STEP'(x)));
+     step = with target (hls0) {
+        match cadr(args) with
+           'var'(id) -> mk:value:reg(id)
+         | 'integer'(v,@_) -> mk:value:const(v, mk:v(32))
+         | x -> ccerror('WRONG_STEP'(x))};
+     fun(aenv, top, loops) {
+        ll_to_hls_simple_pipeline(aenv, top, bb, stepid, step)
+     }
+   } else if (fn === '_pragma_hls_pipeline_loop') {
+     stepid = (match car(args) with
+                  'var'(id) -> id
+                | x -> ccerror('WRONG_STEP'(x)));
+     step = with target (hls0) {
+        match cadr(args) with
+           'var'(id) -> mk:value:reg(id)
+         | 'integer'(v,@_) -> mk:value:const(v, mk:v(32))
+         | x -> ccerror('WRONG_STEP'(x))};
+     fun(aenv, top, loops) {
+        ll_to_hls_loop_pipeline(aenv, top, bb, stepid, step, loops)
+     }
+   }
+}}
+
+\pfcode{
+function ll_to_hls_do_pragmas(aenv, top, pragmas, loops) {
+   foldl(fun(t, p) {
+            match p with
+              [bb;loc;'call'(fn,@args)] -> {
+                 pfn = ll_to_hls_pragma_function(fn, bb, args);
+                 if (pfn) pfn(aenv, t, loops) else t}
+            | else -> t}, top, pragmas)}}
+
+\pfcode{
+function ll_to_hls_driver(top0, pragmas, loops) {
+   top = ll_to_hls_prep_geps(top0);
+   typeenv0 = ll_module_types([]);
+   types = ll_propagate_types_fun(typeenv0, top);
+   aenv = ll_to_hls_prep_memories(top);
+   phirenames = mkhash();
+   bbs = collector(addbb, getbbs) {
+      visit:ir2 (irtoplevel: top) {
+         once irbblock {
+            bblock -> {
+               bbs = ll_to_hls_bbs_prep(aenv, node, types, phirenames);
+               iter b in bbs do
+                  addbb(ll_to_hls_bb_split(aenv, b, types))}}};
+      getbbs()};
+   getram(nm,t, dims) =
+      with target(hls0) {
+         mk:ram:r(nm, ll_to_hls_gettype(t), dims)
+      };
+   nrams = map append r in ohashget(aenv, '*RAMS*') do {
+            match r with
+              [nm;alloca(t,@dims)] -> [getram(nm, t, dims)]
+            | else -> []};
+   makearg(nm, tp) = 
+      visit:ir2 (irtype: tp) {
+         once irtype {
+            pointer -> with target(hls0) { mk:modarg:aout(nm, ll_to_hls_gettype(t)) }
+          | integer -> with target(hls0) { mk:modarg:ain(nm, ll_to_hls_gettype(tp)) }
+          | else -> ccerror('WTF?'(tp))}};
+   t1b = visit:ir2 (irtoplevel: top) {
+      deep irtoplevel {
+         %function -> with target(hls0) {
+            nargs = map [tp;nm] in args do makearg(nm, tp);
+            mk:top:module(nm = name,
+                          rams = nrams, 
+                          args = nargs,
+                          body = bbs)}
+       | else -> ccerror('WTF'())}};
+   t1c = ll_to_hls_rename_phis(t1b, phirenames);
+
+   ////////////////////////
+   tmppp=gen_pprint_ast(hls0, bblock);
+   prnt(t) = visit:hls0 /rec/ (top: t) {
+     once bblock { else -> println(tmppp(node())) }};
+   println("---------------------------------T2c");
+   prnt(t1c);
+   println("---------------------------------");
+   ////////////////////////
+
+
+   t2  = ll_to_hls_mark_registers(aenv, t1c);
+   
+   t2a = ll_to_hls_mark_output(aenv, t2);
+   println("---------------------------------PRE-T2ztmp");
+   prnt(t2a);
+   println("---------------------------------");
+
+   t2aa = ll_to_hls_lift_wires(t2a, 'nophis');
+   println("---------------------------------LIFT");
+   prnt(t2aa);
+   println("---------------------------------");
+
+   t2x1 = ll_to_hls_do_pragmas(aenv, t2aa, pragmas, loops);
+
+   t2x = ll_to_hls_lift_wires(t2x1, 'phis');
+
+   println("---------------------------------T2x");
+   prnt(t2x);
+   println("---------------------------------");
+
+   h2  = ll_to_hls_explicit_fsms(aenv, t2x);
+   prnt1=gen_pprint_ast(hls1, top);
+   println(prnt1(h2));
+   h3  = ll_to_hls_remove_phis(h2);
+
+   println("--------------O");
+   h4  = ll_to_hls_lower_hls1(h3);
+   prnt2=gen_pprint_ast(hls2, top);
+   println(prnt2(h4));
+   println("---------------------------------");
+
+   h4x = h4;//if (pragmas) h4 else ll_to_hls_opt_registers(aenv, h4); // TODO!!!
+   ret0 = ll_to_hls_lower_fsm(h4x);
+   ret2 = ll_to_hls_lower_mems(aenv, ret0);
+   ret3 = ll_to_hls3_lower_insts(ret2);
+   
+   ret  = ll_to_hls3_sort_decls(ret3);
+   return ret}}
+
+%%%%%%%%%%%%%%%

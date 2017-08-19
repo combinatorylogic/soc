@@ -1,0 +1,102 @@
+% literate:
+
+\phcode{
+ast vlhoisted {
+  expr = netdef(moduleItem:m)
+       | include(string:dirpath,string:path)
+       | module(description:d)
+       | reset(statement:s)
+       | inst_exec(number:id, number:crc, number:args, statement:s)
+       | inst_return(number:id, number:crc, expression:e)
+       | inst_noreturn(number:id, number:crc)
+       | inst_wait(number:id, number:crc, expression:e, 
+                   *statement:ss, waitrest:r)
+       ;
+  waitrest = else(*statement:ss)
+           | nop()
+           ;
+}}
+
+
+\pfcode{
+function process_inlined_verilog_inner_c2(fnm, vlg, fp_pipe, fp_wait,
+                                       fp_reset, fp_hoisted, fp_include) {
+  execs = mkhash();
+  waits = mkhash();
+
+  addexec(id, s0) = {
+    ss = verilog_pprint('statement', s0);
+    chk = ohashget(execs, id);
+    ohashput(execs, id, ss : chk)
+  };
+  emit_wait(e,ss,r) = {
+    %S<<(" if (", verilog_pprint('expression',e), ") ",
+           verilog_pprint('statement','begin'(@ss, 'nonblocking'('var'('sfsm_state'),'var'('S_IDLE')),
+                                                   'nonblocking'('var'('ext_done'),'var'('DONE')))),
+         match r with 
+           'else'(ess) -> %S<<(" else ", verilog_pprint('statement','begin'(@ess)))
+         | else -> "")
+  };
+  iter v in vlg do {
+     visit:vlhoisted(expr:v) {
+         once expr {
+            netdef -> fprintln(fp_hoisted, verilog_pprint('moduleItem', m))
+          | include -> fprintln(fp_include, %S<<("`include \"", path, "\""))
+          | module -> fprintln(fp_include, verilog_pprint('description', d))
+          | reset -> fprintln(fp_reset, verilog_pprint('statement',s))
+          | inst_exec -> { addexec(id, s); }
+          | inst_noreturn -> { [] }
+          | inst_return -> addexec(id, 'begin'(
+                'nonblocking'('var'('mem_out_ext_r'), e)))
+          | inst_wait -> {
+              ohashput(waits, id, emit_wait(e,ss,r));
+            }
+         }
+     }
+  };
+  fprintln(fp_pipe, %S<<("  if(exec_isext  & ~stall_but_ext & (sfsm_state == S_IDLE) & ~ext_done) (* full_case *) case(exec_immed10[9:1])"));
+  hashiter(fun(id, vs) {
+             fprintln(fp_pipe, %S<<("          ",id,": begin"));
+             iter v in vs do fprintln(fp_pipe, v);
+             fprintln(fp_pipe, %S<<("          end"));
+           }, execs);
+  fprintln(fp_pipe, %S<<("     endcase"));
+
+  fprintln(fp_wait, %S<<("     (* full_case *) case(exec_immed10[9:1])"));
+  hashiter(fun(id, v) {
+             fprintln(fp_wait, %S<<("          ",id,": begin"));
+             fprintln(fp_wait, v);
+             fprintln(fp_wait, %S<<("          end"));
+           }, waits);
+  fprintln(fp_wait, %S<<("     endcase"));
+}
+}
+
+\pfcode{
+function process_inlined_verilog_c2(fnm, vlg) {
+ pfx = %S<<("./",fnm,"_out/");
+ f_pipe = %S<<(pfx,"c2_custom_pipeline.v");
+
+ f_wait = %S<<(pfx,"c2_custom_wait.v");
+ 
+ f_reset = %S<<(pfx,"c2_custom_reset.v");
+ f_hoisted = %S<<(pfx,"c2_custom_hoist.v");
+ f_include = %S<<(pfx,"c2_custom_include.v");
+ %_mkdir_tmp(f_pipe);
+ #(call-with-output-file f_pipe
+  (fun (fp_pipe)
+  (call-with-output-file f_wait
+  (fun (fp_wait)
+  (call-with-output-file f_reset
+  (fun (fp_reset)
+  (call-with-output-file f_hoisted
+  (fun (fp_hoisted)
+  (call-with-output-file f_include
+  (fun (fp_include)
+     (process_inlined_verilog_inner_c2
+        fnm vlg fp_pipe fp_wait
+        fp_reset fp_hoisted fp_include)))))))))))
+}}
+
+
+%%%%%%%%

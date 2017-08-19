@@ -1,0 +1,424 @@
+% literate:
+
+\subsection{Special blocks expansion}
+
+
+This one is horrible, it clearly need to be broken into few smaller stages instead.
+
+\pfcode{
+function ll_to_hls_extend_outputs(top) {
+   rdepth = mkref([]);
+   getdepth() =
+     visit:hls2 /rec/ (top: top) {
+       once specentry {
+          enqueue_once -> {
+             rdepth := depth}
+       |  enqueue_loop -> {
+             rdepth := depth}
+       |  else -> []}};
+   getdepth();
+   outputs = mkhash();
+   depth = ^rdepth;
+   getwidth(t) =
+      visit:hls2 /rec/ (type: t) {
+         once type { v -> bits }};
+   if (depth)
+     outputs:
+       visit:hls2 /rec/ (top: top) {
+         once modentry {
+           register -> {  // repeats aout
+             aif(chk = ohashget(outputs, nm)) {
+               mk:node(t = mk:v(chk * depth))
+             } else node()}
+         | else -> node()};
+         once modarg {
+            aout -> {
+              w = getwidth(tp);
+              ohashput(outputs, nm, w);
+              mk:node(tp = mk:v(w * depth))}
+         |  else -> node()}}
+   else []:top}}
+
+
+\pfcode{
+function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee) {
+   getreg(v) =
+      visit:hls2 /rec/ (value: v) {
+        once value {
+          reg -> id
+        | else -> ccerror('NOPE'())}};
+   visit:hls2 /rec, dst hls3/ (specentry: ee) {
+      deep reissuereg {
+         r -> [nm;tp;init;step]};
+      deep specentry {
+        enqueue_loop -> symbols (isidle, isentry, thrcount, livecnt, thrlive, loopexitcnd, isoutput) {
+           // Loop control FSM generation:
+           // 1. IDLE stage - zero all the registers. If REQ, set INIT=1 and go to LOOP stage
+           // 2. LOOP:
+           //    N times, increment the thread counter, set the initial registers (either to
+           //    the initial values if INIT==1 or to the step values);
+           //
+           //    If loop exit condition == 1 and thread is alive, set thread live register = 0,
+           //      otherwise set it to 1.
+           //    Count all live threads.
+           //    If there are no more threads alive, set ACK = 1
+           //
+           //    If INIT==0, accumulate the output (execute the exit instructions, transformed to accomodate
+           //     the output vector construction)
+           //
+           //    For the final Nth step, set INIT=0.
+
+           // Some checks first:
+           if (stepinstrs) ccerror('BEHAVIORAL-IN-LOOP-ENTRY'());
+
+           enqueue_reset = mk:stmt:begin([
+              mk:set(isidle, mk:v(mk:const(1, mk:v(1))))]);
+
+           // Assign loop registers to their next values
+           renamesht = mkhash();
+           iter [d;[s;t]] in zip(exit_dst, zip(exit_src, exit_type)) do {
+              dn = getreg(d); sn = getreg(s);
+              addentry(mk:modentry:wire(t, dn));
+              addentry(mk:modentry:assign(dn, mk:reg(sn)));
+              ohashput(renamesht, dn, sn)};
+           renamereg(v) =
+              visit:hls2 /rec, dst hls3/ (value: v) {
+                once value {
+                  reg -> aif(chk = ohashget(renamesht, id)) mk:reg(id=chk) else node()
+                | else -> node()}};
+
+           rregsht = mkhash();
+           loopregs = map append [nm;tp;init;step] in rregs do {
+              nextnm = nm;
+              ohashput(rregsht, nm, nextnm);
+              addentry(mk:modentry:wire(tp, nextnm));
+              addentry(mk:modentry:assign(nextnm,
+                mk:e(
+                  mk:select(mk:reg(isentry),
+                            renamereg(init), // No need to rename it, really
+                            renamereg(step)))));
+              return []
+           };
+           
+           // Increment thread counter, threadId, live count
+           inccounter = { // Thread counter just cycles in 1 .. N continuously
+              nextnm = %Sm<<(thrcount, "_next");
+              addentry(mk:modentry:register(mk:v(32), thrcount));
+              addentry(mk:modentry:wire(mk:v(32), nextnm));
+              addentry(mk:modentry:assign(nextnm,
+                 mk:e(
+                   mk:select(mk:e(mk:op('SLT', [mk:reg(thrcount); mk:const(depth, mk:v(32))], mk:v(32))),
+                      mk:e(mk:op('Add', [mk:reg(thrcount); mk:const(1, mk:v(32))], mk:v(32))),
+                      mk:const(1, mk:v(32))))));
+              [mk:stmt:set(thrcount, mk:v(mk:reg(nextnm)))]};
+           incthrid = { // ThrId increments the same way as with the simple pipeline. TODO: TYPE!!!
+              idname = getreg(thrid);
+              nextnm = %Sm<<(idname, "_next");
+              addentry(mk:modentry:register(mk:v(32), idname)); // TODO: type!
+              addentry(mk:modentry:wire(mk:v(32), nextnm));
+              addentry(mk:modentry:assign(nextnm,
+                 mk:e(
+                   mk:select(mk:e(mk:op('SLT', [mk:reg(thrcount); mk:const(depth, mk:v(32))], mk:v(32))),
+                      mk:e(mk:op('Add', [mk:reg(idname); step], mk:v(32))),
+                      thrinit))));
+              [mk:stmt:set(idname, mk:v(mk:reg(nextnm)))]};
+           inclive = { // Live counter contains a number of threads issued/reissued at this iteration
+              nextnm = %Sm<<(livecnt, "_next");
+              addentry(mk:modentry:register(mk:v(32), livecnt));
+              addentry(mk:modentry:wire(mk:v(32), nextnm));
+              addentry(mk:modentry:assign(nextnm,
+                 mk:e(
+                   mk:select(mk:e(mk:op('SLT', [mk:reg(thrcount); mk:const(depth, mk:v(32))], mk:v(32))),
+                      mk:e(mk:op('Add', [mk:reg(livecnt); mk:reg(thrlive)], mk:v(32))),
+                      mk:const(0, mk:v(32))))));
+              [mk:stmt:set(livecnt, mk:v(mk:reg(nextnm)))]};
+
+           increments = [@inccounter;
+                         @incthrid;
+                         @inclive];
+           checkexit = { // Set the live status wire for the thread being currently issued/re-issued
+              // While we're at it, emit the live status pipeline:
+              lregs = map i in [0..depth] do {
+                 %Sm<<(thrlive, "_", i)
+              };
+              iter l in lregs do
+                addentry(mk:modentry:register(mk:v(1), l));
+              addentry(mk:modentry:wire(mk:v(1), thrlive));
+              addentry(mk:modentry:always(
+                 mk:if(mk:op('NOT',[mk:reg('reset')], mk:v(32)),
+                    mk:begin(
+                      map l in lregs do mk:stmt:set(l, mk:v(mk:const(0, mk:v(1))))),
+                    mk:begin(
+                     collector(add, get) {
+                      foldl(fun(l, r) {
+                               add(mk:stmt:set(r, mk:v(mk:reg(l)))); r}, thrlive, lregs);
+                      get()}))));
+              lastlive = car(reverse(lregs));
+              // Now, check the exit condition and a previous live status if needed.
+              // Thread is live if:
+              //   - it's an entry loop and exit condition holds
+              //   - or, the previous iteration was alive and the exit condition holds
+              negloopexitcnd = %Sm<<(loopexitcnd, "_not");
+              addentry(mk:modentry:assign(thrlive,
+                mk:e(
+                   mk:select(mk:reg(isentry),
+                             mk:reg(negloopexitcnd),
+                             mk:e(mk:select(mk:reg(lastlive),
+                                       mk:reg(negloopexitcnd),
+                                       mk:const(0, mk:v(1))))))));
+              // Emit isoutput
+              addentry(mk:modentry:wire(mk:v(1), negloopexitcnd));
+              addentry(mk:modentry:assign(negloopexitcnd,
+                  mk:e(mk:op('NOT', [mk:reg(loopexitcnd)], mk:v(1)))));
+              addentry(mk:modentry:wire(mk:v(1), isoutput));
+              addentry(mk:modentry:assign(isoutput,
+                mk:e(
+                   mk:select(mk:reg(isentry),
+                             mk:reg(loopexitcnd),
+                             mk:e(mk:select(mk:reg(lastlive),
+                                       mk:reg(loopexitcnd),
+                                       mk:const(0, mk:v(1))))))));
+
+              // Now, lift the exit condition itself:
+              addentry(mk:modentry:wire(mk:v(1), loopexitcnd));
+              addentry(mk:modentry:assign(loopexitcnd, exitcnd));
+              [mk:stmt:if(mk:op('EQ',[mk:reg(thrcount);mk:const(depth, mk:v(32))], mk:v(1)),
+                          mk:set(isentry, mk:v(mk:const(0, mk:v(1)))),
+                          mk:begin([mk:nop()]));
+               /*
+               mk:stmt:display("ISENTRY=%d LOOP_EXIT_CND=%d THRCOUNT=%d LIVECOUNT=%d THRLIVE=%d", [mk:reg(isentry);mk:reg(loopexitcnd); mk:reg(thrcount); mk:reg(livecnt); mk:reg(thrlive)]);
+               @map [nm;tp;init;step] in rregs do {
+                  mk:stmt:display(%S<<("LOOP REG ", nm, ":: %d"), [mk:reg(nm)])
+               };*/
+               mk:stmt:if(mk:op('And',
+                                 [mk:e(mk:op('EQ',[mk:reg(thrcount);mk:const(depth, mk:v(32))], mk:v(1)));
+                                  mk:e(mk:op('EQ',[mk:reg(livecnt);mk:const(0,mk:v(1))], mk:v(1)))], mk:v(1)),
+                          mk:begin([
+                                mk:set(isidle, mk:v(mk:const(1, mk:v(1))));
+                                /*mk:display("EXIT AT %d", [mk:reg(isentry)]);*/
+                                mk:set('ACK', mk:v(mk:const(1, mk:v(1))))]),
+                          mk:begin([mk:nop()]))]};
+           // Emit isentry and isidle
+           addentry(mk:modentry:register(mk:v(1), isentry));
+           addentry(mk:modentry:register(mk:v(1), isidle));
+
+           accumulate = {
+              // Accumulate the current thread output, if:
+              //   - entry or thread was alive, but the exit condition failed
+              // We're extracting the assignment from the final instructions
+              // Only assignments to the ouput registers are allowed there, anything else
+              // triggers an error.
+              getoutdefs() =
+                collector(add, get) {
+                  iter i in final do
+                     visit:hls2 /rec/ (instr:i) {
+                       deep instr {
+                          a ->
+                            aif(chk = ohashget(outputs, reg))
+                               add([reg;chk;op])
+                            else ccerror('NON-OUTPUT-ASSIGNMENT-IN-REISSUE'())
+                        | z -> ccerror('ILLEGAL-INSTRUCTION-IN-REISSUE'())};
+                       deep value {
+                          reg -> {  // If it's a header phi register, we have to refer to its _next value
+                                    // here instead.
+                            aif(chk = ohashget(rregsht, id)) mk:reg(chk) else node()}
+                        | else -> node()};
+                       deep iop {
+                          v -> v
+                        | else -> ccerror('ILLEGAL-INSTRUCTION-IN-REISSUE'())}};
+                  return get()};
+              outs = getoutdefs();
+              iter [reg;w;v] in outs do {
+                 nextnm = %Sm<<(reg, "_next");
+                 addentry(mk:modentry:wire(mk:v(w * depth), nextnm));
+                 // TODO:
+                 wires = map d in [0..depth] do {
+                    nm = %S<<(reg, "_thr_", d);
+                    rd = (depth - d) - 1;
+                    addentry(mk:modentry:wire(mk:v(w), nm));
+                    addentry(mk:modentry:assign(nm,
+                      mk:e(
+                        mk:select(mk:e(mk:op('EQ', [mk:reg(thrcount); mk:const(d+1, mk:v(32))], mk:v(1))),
+                                  v,
+                                  mk:e(mk:op('range',
+                                        [mk:reg(reg);
+                                         mk:value:const(rd * w + (w - 1), mk:v(32));
+                                         mk:value:const(rd * w, mk:v(32))], mk:v(w)))))));
+                    return mk:value:reg(nm)};
+                 addentry(mk:modentry:assign(nextnm,
+                    mk:e(mk:op('compose',
+                         wires, mk:v(w*depth)))))
+              };
+              [@map [reg;w;v] in outs do
+                mk:stmt:if(mk:v(mk:reg(isoutput)),
+                   mk:set(reg, mk:v(mk:reg(%Sm<<(reg, "_next")))),
+                   mk:begin([mk:nop()]))]};
+
+
+           // Initial counter register values, reset ACK
+           initialise = [
+                  mk:stmt:begin([
+                     mk:set(thrcount, mk:v(mk:const(1, mk:v(32))));
+                     mk:set(isentry, mk:v(mk:const(1, mk:v(32))));
+                     mk:set(livecnt, mk:v(mk:const(0, mk:v(32))));
+                     mk:set('ACK', mk:v(mk:const(0, mk:v(1))))
+                  ])];
+           // Wait for the req signal
+           waitreq = [
+              mk:stmt:if(mk:v(mk:reg('REQ')),
+                mk:begin([
+                   mk:set(isidle, mk:v(mk:const(0, mk:v(1))));
+                   mk:set(getreg(thrid), mk:v(thrinit))
+                   ]),
+                mk:begin([
+                   mk:set(isidle, mk:v(mk:const(1, mk:v(1))))
+                   ]))
+           ];
+           
+           enqueue_fsm =
+            mk:stmt:begin([
+              @loopregs;
+              mk:stmt:if(
+                 mk:v(mk:reg(isidle)),
+                 mk:stmt:begin(
+                  // IDLE stage
+                  [@initialise;
+                   @waitreq]),
+                 mk:stmt:begin(
+                  // LOOP stage
+                  [@increments;
+                   @accumulate;
+                   @checkexit
+                  ]))]);
+             
+           a1 = mk:modentry:always(
+              mk:if(mk:op('NOT',[mk:reg('reset')], mk:v(32)),
+                    enqueue_reset,
+                    enqueue_fsm));
+           addentry(a1)
+        }
+      | else -> ccerror('IMPOSSIBLE'())}}}}
+
+\pfcode{
+function ll_to_hls_unroll_enqueue(outputs, ee)
+collector (addentry, getentries) {
+   getreg(v) =
+      visit:hls2 /rec/ (value: v) {
+        once value {
+          reg -> id
+        | else -> ccerror('NOPE'())}};
+   visit:hls2 /rec, dst hls3/ (specentry: ee) {
+      once specentry {
+        enqueue_loop -> ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee)
+      | enqueue_once ->
+          symbols(isidle, isissue, isassemble,
+                  issuecount, acccount, nextthrid,
+                  nextissuecount) {
+           enqueue_reset =
+              mk:stmt:begin(
+                ss = [
+                   mk:set(issuecount, mk:v(mk:const(0, mk:v(32))));
+                   mk:set(acccount, mk:v(mk:const(0, mk:v(32))));
+                   mk:set(getreg(thrid), mk:v(mk:const(0, mk:v(32))));
+                   mk:set('ACK', mk:v(mk:const(0, mk:v(1))));
+                   @{
+                     map a in accum_dst do {
+                      mk:set(getreg(a), mk:v(mk:const(0, mk:v(32))))}}
+                ]);
+           addentry(mk:modentry:register(mk:v(32), getreg(thrid)));  // TODO: type!
+           addentry(mk:modentry:register(mk:v(32), issuecount));
+           addentry(mk:modentry:register(mk:v(32), acccount));
+           addentry(mk:modentry:wire(mk:v(1), isidle));
+           addentry(mk:modentry:wire(mk:v(1), isissue));
+           addentry(mk:modentry:wire(mk:v(1), isassemble));
+           addentry(mk:modentry:wire(mk:v(32), nextthrid)); // TODO: type!
+           addentry(mk:modentry:wire(mk:v(32), nextissuecount));
+
+           addentry(mk:modentry:assign(nextissuecount,
+               mk:e(mk:op('Add', [mk:reg(issuecount); mk:const(1, mk:v(32))], mk:v(32)))));
+           addentry(mk:modentry:assign(nextthrid,
+               mk:e(mk:op('Add', [thrid; step], mk:v(32))))); // TODO: type!
+ 
+           addentry(mk:modentry:assign(isidle,
+               mk:e(
+                 mk:op('Or', [
+                   mk:e(mk:op('EQ', [mk:reg(issuecount); mk:const(0, mk:v(32))], mk:v(1)));
+                   mk:reg('ACK')], mk:v(1)))));
+           addentry(mk:modentry:assign(isissue,
+               mk:e(
+                 mk:op('SLT', [
+                    mk:reg(issuecount);
+                    mk:const(depth+1, mk:v(32))], mk:v(1)))));
+           addentry(mk:modentry:assign(isassemble,
+               mk:e(
+                 mk:op('And', [
+                    mk:e(mk:op('EQ', [mk:reg(issuecount); mk:const(depth+1, mk:v(32))], mk:v(1)));
+                    mk:e(mk:op('SLT', [mk:reg(acccount); mk:const(depth+1, mk:v(32))], mk:v(1)))],
+                    mk:v(1)))));
+
+           iter [a;src] in zip(accum_dst, accum_src) do {
+              accnm = %Sm<<(getreg(a), "_collect");
+              dstwidth = ohashget(outputs, getreg(a));
+              addentry(mk:modentry:wire(mk:v(depth * dstwidth), accnm));
+              addentry(mk:modentry:assign(accnm,
+                       mk:e(mk:op('compose',
+                              reverse(map thread in [0..depth] do {
+                                 cnd = mk:value:e(
+                                    mk:op('EQ', [mk:reg(acccount);
+                                                 mk:const(thread + 1, mk:v(32))],
+                                          mk:v(1)));
+                                 mk:value:e(mk:select(cnd, src,
+                                      mk:e(mk:op('range',
+                                            [a; mk:value:const(thread * dstwidth + dstwidth - 1, mk:v(32));
+                                                mk:value:const(thread * dstwidth, mk:v(32))],
+                                            mk:v(dstwidth)))))
+                              }), mk:v(depth*dstwidth)))))};
+           
+           enqueue_fsm =
+              mk:stmt:if(
+                mk:v(mk:reg(isidle)),
+                mk:stmt:begin(
+                  ss = [
+                     mk:set('ACK', mk:v(mk:const(0, mk:v(1))));
+                     mk:if(mk:v(mk:reg('REQ')),
+                           mk:stmt:begin(
+                             ss = [
+                                mk:set(issuecount, mk:v(mk:const(1, mk:v(32))));
+                                mk:set(acccount, mk:v(mk:const(1, mk:v(32))));
+                                mk:set(getreg(thrid), mk:v(thrinit))
+                             ]),
+                           mk:stmt:begin( ss= [
+                              mk:set(issuecount, mk:v(mk:const(0, mk:v(32))))]))
+                
+                  ]),
+                mk:stmt:if(
+                   mk:v(mk:reg(isissue)),
+                   mk:stmt:begin( // Thread issue process
+                      ss = [
+                         mk:set(getreg(thrid), mk:v(mk:reg(nextthrid)));
+                         mk:set(issuecount, mk:v(mk:reg(nextissuecount)))
+                      ]),
+                   mk:stmt:begin(
+                     ss = [
+                       @map a in accum_dst do
+                          mk:set(getreg(a), mk:v(mk:reg(%Sm<<(getreg(a), "_collect"))));
+                       mk:stmt:if(
+                         mk:v(mk:reg(isassemble)),
+                         mk:stmt:begin(
+                           ss = [ // Thread assembly process
+                             mk:set(acccount, mk:op('Add', [mk:reg(acccount); mk:const(1, mk:v(32))], mk:v(32)))
+                           ]),
+                         mk:stmt:begin( // Assembled, set ACK and go to idle
+                           ss = [
+                              mk:set('ACK', mk:v(mk:const(1, mk:v(1))))
+                           ]))])));
+                     
+           a1 = mk:modentry:always(
+              mk:if(mk:op('NOT',[mk:reg('reset')], mk:v(32)),
+                    enqueue_reset,
+                    enqueue_fsm));
+           addentry(a1)}
+      | else -> ccerror('TODO'())}};
+   return getentries()}}
+
+%%%%%%

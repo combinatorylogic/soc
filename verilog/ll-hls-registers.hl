@@ -1,0 +1,584 @@
+%literate:
+
+\subsection{Splitting registers and wires}
+
+\pfcode{
+function ll_to_hls_cache_regtypes(top) {
+  regs = mkhash();
+  addreg(nm, tp) = ohashput(regs, nm, tp);
+  visit:hls0 /rec/ (top: top) {
+    deep modarg {
+       ain -> addreg(nm, tp) | aout -> addreg(nm, tp)
+     | aoutreg -> addreg(nm, tp)};
+    deep instr {
+       i -> addreg(dst, otp) }};
+  return regs}}
+
+\pfcode{
+%"hls0:top -> hls0:top; Infer the registers"
+function ll_to_hls_mark_registers(aenv, top) {
+  // Mark all the SSA registers that are used in another basic block
+  //   or in a phi node as persistent registers.
+
+  // 1. Cache the register origin bblock (FSM stages by now)
+  origs = mkhash();
+  setorigin(bb, reg) = ohashput(origs, reg, bb);
+  prep() = 
+   visit:hls0 /rec/ (top: top) {
+     deep bblock {
+        bb -> iter b in bs do b(name)};
+     deep parblock(bb) {
+        pb -> iter s in ss do s(bb)};
+     deep instr(bb) {
+        i -> setorigin(bb, dst)}};
+  prep();
+
+  // 2. Mark registers used outside of their origin stage or in
+  //    a phi node of any stage
+  regs = mkhash(); noeffect = mkhash();
+  setreg(nm) = ohashput(regs, nm, nm);
+  setnoeff(nm) = ohashput(noeffect, nm, nm);
+  markphi(nd) =
+    visit:hls0 /rec/ (iop: nd) {
+       deep value {
+          reg -> setreg(id) | else -> []}};
+  markall(bb, nd) =
+    visit:hls0 /rec/ (iop: nd) {
+       deep value {
+          reg -> if (not(ohashget(origs, id)===bb)) setreg(id)}};
+  markregs() = 
+    visit:hls0 /rec/ (top: top) {
+     deep bblock {
+        bb -> iter b in bs do b(name)};
+     deep parblock(bb) {
+        pb -> iter s in ss do s(bb)};
+     deep instr(bb) {
+        i -> op(dst, bb)};
+     deep iop(dst, bb) {
+        phi -> markphi(node())
+      | store -> {setnoeff(dst); markall(bb, node())}
+      | load_start -> {setnoeff(dst); markall(bb, node())}
+      | op_start -> {setnoeff(dst); markall(bb, node())}
+      | else -> markall(bb, node())}};
+  markregs();
+  // 3. Rewrite
+  return visit:hls0 /rec/ (top:top) {
+     deep instr {
+        i -> if(ohashget(regs, dst))
+               mk:node(tp = mk:reg())
+             else if(ohashget(noeffect, dst))
+               mk:node(tp = mk:none())
+             else
+               mk:node(tp = mk:wire())}}}}
+
+\pfcode{
+function ll_to_hls_mark_output(aenv, top) {
+   isoutput(id) = {
+      aif(chk = ohashget(aenv, id)) {
+        match chk with
+           'output'(x) -> ll_to_hls_gettype(x)
+         | else -> []} else []};
+   visit:hls0 /rec/ (top: top) {
+      deep instr {
+         i -> op(otp, thisnodesrc())};
+      deep iop(otp, up) {
+         store -> 
+            aif(notp = isoutput(mem)) {
+               mk:instr:i(mk:reg(), mem, notp, mk:v(v))
+            } else up
+       | else -> up}}}}
+
+\pfcode{
+function ll_to_hls_lift_wires_bb(bb, dophis) {
+  rewrites = mkhash(); rewrite(id) = aif(chk = ohashget(rewrites, id)) chk else id;
+  isvalue(op) =
+    visit:hls0 /rec/ (iop: op) {
+       once iop { v -> true | else -> []}};
+  skiphi(op) =
+    if (dophis === 'nophis') {
+      visit:hls0 /rec/ (iop:op) {
+         once iop {
+            phi -> true
+          | else -> []}}
+    } else [];
+  pass1() =
+   visit:hls0 /rec/ (bblock: bb) {
+     deep parblock {
+       pb -> mk:node(ss = map append s in ss do s)};
+     deep instr {
+       i -> tp(dst, otp, op)};
+     once bbtype { else -> node() };
+     deep itp(dst, otp, op) {
+       reg ->
+         if (isvalue(op) || skiphi(op)) [mk:instr:i(thisnodesrc(), dst, otp, op)]
+         else symbols(newnm) {
+          ohashput(rewrites, dst, newnm);
+          [mk:instr:i(mk:wire(), newnm, otp, op);
+           mk:instr:i(mk:reg(), dst, otp, mk:v(mk:reg(newnm)))]}
+      | else -> [mk:instr:i(thisnodesrc(), dst, otp, op)]}};
+  // We have to do it in two passes here, because it's possible to use
+  // a register before it's lifted to a wire within one basic block.
+  visit:hls0 /rec/ (bblock: pass1()) {
+     deep value {
+        reg -> mk:reg(rewrite(id))
+      | else -> node()}}}}
+
+\pfcode{
+%"hls0:top -> hls0:top; A temporary (simple) solution:
+  lift all the register assignments as wires and use these wires in the same fsm stage"
+function ll_to_hls_lift_wires(top, dophis)
+  visit:hls0 /rec/ (top: top) {
+    once bblock { else -> ll_to_hls_lift_wires_bb(node(), dophis) }}}
+
+
+We still allow phis here, they are going to be resolved as the very last step (either by small origin registers + muxes, or by fusing
+registers).
+
+\subsection{Pipeline handling}
+
+\pfcode{
+function ll_to_hls_extract_pipeline(aenv, top, bbs, ppname) {
+   bbsh = mkhash();
+   iter b in bbs do ohashput(bbsh, b, b);
+   visit:hls0 /rec/ (top: top) {
+      deep bblock {
+         bb -> if (ohashget(bbsh, name)) mk:node(tp = mk:pipeline(ppname))
+               else node()}}}}
+
+\pfcode{
+function ll_to_hls_propagate_pipeline(aenv, top, ppname, bbs, endregs, threadregs) {
+   // N.B.: bbs list is expected to be in a correct pipeline order
+   bbsh = mkhash();
+   bbsvh = mkhash();
+   regtypes = mkhash();
+   iter b in bbs do ohashput(bbsh, b, b);
+   // 1. Collect all the registers assigned in the pipeline.
+   //    TODO:
+   //      Mark all the registers/wires used in the pipeline but not defined there as 'foreign'.
+   //      This will later help to exclude them from a register allocation.
+   getregs() = collector(addreg, getregs) {
+     visit:hls0 /rec/ (top: top) {
+        deep bblock {
+           bb -> if (ohashget(bbsh, name)) {
+              ohashput(bbsvh, name, thisnodesrc());
+              iter b in bs do b(name) }};
+        deep parblock(bbname) {
+           pb -> iter s in ss do s(bbname)};
+        deep instr(bbname) {
+           i -> tp(bbname, dst, otp)};
+        deep itp(bbname, dst, otp) {
+           reg -> addreg([dst;bbname;otp])
+         | else -> [] }};
+     return getregs()};
+   regs = getregs();
+   regsh = mkhash();
+
+   iter [nm;bb;tp] in regs :: threadregs do {
+      ohashput(regtypes, nm, tp);
+      ohashput(regsh, nm, bb)};
+
+   // 2. Starting with the given list of registers (i.e., the output and / or some phis),
+   //    going backwards from the last pipeline stage, mark each stage with registers that are used
+   //    in this or any consequent stage, up until a moment register is assigned.
+
+   getbbregs(bb) =
+     collector(adduse, getuses)
+     collector(adddef, getdefs) {
+        visit:hls0 /rec/ (bblock: bb) {
+           deep instr {
+              i -> if (ohashget(regsh, dst)) adddef(dst)};
+           deep value {
+              reg -> if (ohashget(regsh, id)) adduse(id)}};
+        return unifiq(getuses()):getdefs()};
+
+   bbregrewrites = mkhash(); // will collect the rewrites here
+   foldl(fun(regs, bb) {
+             bbx = ohashget(bbsvh, bb);
+            <bbuses:bbdefs> = getbbregs(bbx);
+             ndregs = set_subst(regs, bbdefs);
+             bbuses = set_subst(bbuses, bbdefs);
+             nregs =  ndregs :: bbuses;
+             ohashput(bbregrewrites, bb, ndregs);
+             return nregs
+         }, endregs, reverse(bbs));
+
+   // 3. Rename all the pipeline stage registers, inject the reassignment of the implicitly passed registers.
+   foldl(fun(prev, next) {
+            rews = ohashget(bbregrewrites,next);
+            nrews = map r in rews do {
+               [r; %Sm<<(prev, "_", r); %Sm<<(next, "_", r); ohashget(regtypes, r)]
+            };
+            ohashput(bbregrewrites, next, nrews);
+            return next;
+         }, car(bbs), cdr(bbs));
+  // special handling for the first one
+  prev=car(bbs);
+  nr1 = map r in ohashget(bbregrewrites, car(bbs)) do {
+     [r; r; %Sm<<(prev, "_", r); ohashget(regtypes, r)]};
+  ohashput(bbregrewrites, car(bbs), nr1);
+
+   endregsh = mkhash();
+   rewritebb(bb, bbname, bbregs, bbregsht) = {
+      writeline('RW'('BBNAME'(bbname),@bbregs));
+      visit:hls0 /rec/ (bblock: bb) {
+        deep instr {
+           i -> if (ohashget(regsh, dst)) { // prefix it with a bb name
+                   if (memq(dst, endregs)) {
+                      ohashput(endregsh, dst, [%Sm<<(bbname, "_", dst); otp])};
+                   mk:node(dst = %Sm<<(bbname, "_", dst))
+                } else node()};
+        deep value {
+           reg -> aif(chk = ohashget(bbregsht, id)) {
+               writeline('BBR'(chk));
+              <[iid1;prev;next;tp]> = chk;
+               mk:node(id = next)} else node()
+         | else -> node()};
+        deep bblock {
+           bb -> 
+              mk:node(bs = mk:parblock:pb(name = %Sm<<(name, "_pipestageregs"),
+                                          ss   = map [iid2;prev;next;tp] in bbregs do {
+                                                   if (memq(iid2, endregs)) {
+                                                      ohashput(endregsh, iid2, [next;tp])};
+                                                   mk:instr:i(mk:reg(), next, tp, mk:iop:v(mk:reg(prev)))
+                                                 }, pars = []):bs)
+           }}};
+
+   prevs = mkhash();
+   foldl(fun (l, r) {ohashput(prevs, r, l); r}, car(bbs), cdr(bbs));
+
+   final() = visit:hls0 /rec/ (top: top) {
+      deep bblock {
+         bb -> if (ohashget(bbsh, name)) {
+           bbregs = ohashget(bbregrewrites, name);
+           prvn = ohashget(prevs, name);
+           bbregsprev = if (prvn) ohashget(bbregrewrites, prvn) else [];
+           bbregsht = mkhash();
+           iter [nm;prev;next;tp] in bbregsprev do ohashput(bbregsht, nm, [nm;prev;next;tp]);
+           rewritebb(node(), name, bbregs, bbregsht)
+      } else node()}};
+   return endregsh:final()
+}}
+
+\pfcode{
+function ll_to_hls_simple_pipeline(aenv, top, entrybb, stepid, step) {
+   // TODO!!!!
+
+   //1. Start with the entry basic block of a pipeline, follow down to a back edge or an exit,
+   //   and  mark the pipeline basic blocks in sequence.
+   bbsh = mkhash();
+   cachebbs() =
+     visit:hls0 /rec/ (top: top) {
+         once bblock { bb -> ohashput(bbsh, name, node()) }};
+   cachebbs();
+
+   getnext(bb) =
+      visit:hls0 /rec/ (bblock: bb) {
+         deep bblock { bb -> next };
+         deep exit {
+            br -> dst
+          | else -> []}};
+
+   getbbslist() =
+      collector(addbb, getbbs) {
+        do loop(bb = entrybb) {
+           addbb(bb);
+           nxt = getnext(ohashget(bbsh, bb));
+           if (nxt) loop(nxt)};
+        getbbs()};
+   bbs = getbbslist();
+
+   bbsc = mkhash();
+   iter b in bbs do ohashput(bbsc, b, b);
+
+   //2. Introduce an explicit step register. Detect the exit and re-entry registers (inner loop phi nodes)
+   idname = gensym();
+   rewritebb(bb) =
+      visit:hls0 /rec/ (bblock: bb) {
+         deep value {
+            reg -> if (id === stepid) mk:node(id = idname) else node()
+          | else -> node()}};
+   rewriteit() =
+      visit:hls0 /rec/ (top: top) {
+         deep bblock {
+            bb -> if (ohashget(bbsc, name)) rewritebb(node()) else node()}};
+            
+   ntop = rewriteit();
+   //3. Apply the pipeline extraction and pipeline register propagation passes.
+   getoutputs() = collector(add, get) {
+      visit:hls0 /rec/ (top: ntop) {
+         once modarg {
+            aout -> add([nm;tp]) | else -> []}};
+      return get()};
+   outregs = getoutputs();
+
+   ppname = %Sm<<(idname, "_pipe");
+   ntop1 = ll_to_hls_extract_pipeline(aenv, ntop, bbs, ppname);
+   tp0 = with target (hls0) {mk:type:v(32)};//TODO!!!
+  <eregs:ntop2> = ll_to_hls_propagate_pipeline(aenv, ntop1, ppname, bbs,
+                                               map [nm;tp] in outregs do nm, [[idname;'*args*';tp0]]);
+
+   //4. Generate an enqueue FSM around this pipeline.
+
+   // For the simple case (no re-issue loop) we only alter the step register.
+   srcdsts = hashmap(fun(k, v) [k;@v], eregs);
+   accum_dst = with target(hls0) { map [a;b;t] in srcdsts do mk:value:reg(a)};
+   accum_src = with target(hls0) { map [a;b;t] in srcdsts do mk:value:reg(b)};
+ 
+   with target (hls0) {
+      // Enqueue FSM is following (N = pipeline depth):
+      // IDLE: do-nothing, if REQ, go to ISSUE
+      // ISSUE: N times, set the initial values of the pipeline first stage inputs, incrementing the thread ID
+      //        register by a given step, then go to ASSEMBLE
+      // ASSEMBLE: N times, assign the resulting values to the output vector, then set ACK and go to IDLE
+
+      enq = mk:bblock:bb(
+             tp = mk:enqueue_once(
+                    id = 'default',
+                    pipeline = ppname,
+                    depth = length(bbs),
+                    thrid = mk:reg(idname),
+                    step = step,
+                    thrinit = mk:reg(stepid),
+                    accum_dst = accum_dst, // TODO! Collect the output registers!
+                    accum_src = accum_src  // TODO!
+                    ),
+             name = 'entry',
+             bs = [],
+             next = mk:ret());
+      visit:hls0 /rec/ (top: ntop2) {
+         deep top {
+            module -> mk:node(body = enq : body)}}}}}
+
+
+\pfcode{
+function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
+   //1. Start with the entry basic block of a pipeline, follow down to a back edge or an exit,
+   //   and  mark the pipeline basic blocks in sequence.
+
+   //   Assuming the pragma is placed right before the loop entry bb,
+   //   and that the CFG shape is following:
+   //     entry (pragma is here)
+   //     |
+   //     -> loopentry -> pipeline .... -> loopentry
+   //        |-> exit
+   //
+   //   Cases that are not supported:
+   //    -  More than one basic blocks in an entry chain (can be a result of a loop invariant motion,
+   //         must be mitigated by a rematerialisation)
+   //    -  More than one basic blocks in an exit chain
+   //    -  Any other loop CFG shape (e.g., exit edge is not from an entry edge, as
+   //       in a do {...} while() loop
+   //    -  Thread ID register referenced anywhere in an entry basic block
+   //
+   //   Loop analysis information is outdated by this moment, so we'll only use it to get en exit edge.
+  <[lentry;lexit]> = car(map append l in (cadr(loops)) do
+                    match l with
+                       'exitedge'('L1',F,T) -> [[F;T]]
+                     | else -> []);
+
+   //2. Introduce an explicit step register. Detect the exit and re-entry registers (inner loop phi nodes)
+   idname = gensym();
+   rewritebb(bb) =
+      visit:hls0 /rec/ (bblock: bb) {
+         deep value {
+            reg -> if (id === stepid) mk:node(id = idname) else node()
+          | else -> node()}};
+   rewriteit() =
+      visit:hls0 /rec/ (top: top0) {
+         deep bblock {
+            bb -> rewritebb(node())}};
+            
+   top = rewriteit(); ntop = top;
+
+   bbsh = mkhash();
+   cachebbs() =
+     visit:hls0 /rec/ (top: top) {
+         once bblock { bb -> ohashput(bbsh, name, node()) }};
+   cachebbs();
+
+   getnext(bb) =
+      visit:hls0 /rec/ (bblock: bb) {
+         deep bblock { bb -> next };
+         deep exit {
+            br -> dst
+          | else -> []}};
+
+   getnexts(bb) =
+        visit:hls0 /rec/ (bblock: bb) {
+           deep bblock { bb -> next };
+           deep exit {
+              br -> [dst]
+            | brc -> [tr;fl]
+              // switch is not allowed here
+            | else -> []}};
+
+   exits0 = getnexts(ohashget(bbsh, lentry));
+   lbody = car(filter e in exits0 as not(e===lexit));
+
+   getbbslist() =
+      collector(addbb, getbbs) {
+        do loop(bb = lbody) {
+           addbb(bb);
+           nxt = getnext(ohashget(bbsh, bb));
+           if (nxt && not(nxt===lentry)) loop(nxt)};
+        getbbs()};
+   bbs = getbbslist();
+
+   println('BBS='(@bbs));
+
+   bbsc = mkhash();
+   iter b in bbs do ohashput(bbsc, b, b);
+
+
+   getphis(bb) =
+      visit:hls0 /rec/ (bblock: bb) {
+         deep bblock {
+           bb -> map append b in bs do b};
+         deep parblock {
+           pb -> map append s in ss do s};
+         deep instr {
+           i -> op(dst, tp, otp)};
+         deep iop(dstreg, itp, iotp) {
+           phi -> [[dstreg; itp; iotp; map append a in args do a]]
+         | else -> []}; 
+         deep phiarg { p -> v(label) };
+         deep itp { reg -> 'reg' | else -> []};
+         deep value(srclabel) {
+           reg -> [[srclabel; 'reg'; id]]
+         | else -> [[srclabel; 'v'; node()]]}};
+
+   ephis = getphis(ohashget(bbsh, lentry));
+   println('PHIS'(@ephis));
+   // Entry registers are all of the phis that are, well, registers (not wires)
+   // Exit registers are all the registers in the phi arguments that are coming from a back edge
+   rentries = map append [reg;itp;otp;args] in ephis do {
+      if (itp) [[reg;lentry;otp]] else []};
+   rexits = map append [reg;itp;otp;args] in ephis do {
+      map append [lbl;tp;id] in args do {
+         if (not (lbl === entrybb) && tp == 'reg') {
+            [id]} else []
+      }};
+   println('ENTRIES'(@rentries));
+   println('EXITS'(@rexits));
+
+   //3. Apply the pipeline extraction and pipeline register propagation passes.
+   ppname = %Sm<<(idname, "_pipe");
+   ntop1 = ll_to_hls_extract_pipeline(aenv, ntop, bbs, ppname);
+   tp0 = with target (hls0) {mk:type:v(32)};//TODO!!!
+  <eregs:ntop2> = ll_to_hls_propagate_pipeline(aenv, ntop1, ppname, bbs,
+                                               rexits,
+                                               rentries :: [[idname;'*args*';tp0]]);
+
+   //4. Generate an enqueue FSM around this pipeline.
+
+   // For the simple case (no re-issue loop) we only alter the step register.
+   srcdsts = hashmap(fun(k, v) [k;@v], eregs);
+   accum_dst = with target(hls0) { map [a;b;t] in srcdsts do mk:value:reg(a)};
+   accum_src = with target(hls0) { map [a;b;t] in srcdsts do mk:value:reg(b)};
+   exit_types = with target(hls0) { map [a;b;t] in srcdsts do t };
+
+   with target (hls0) {
+      // Enqueue FSM is following (N = pipeline depth):
+      // IDLE: do-nothing, if REQ, go to ISSUE
+      // ISSUE: N times, set the initial values of the pipeline first stage inputs, incrementing the thread ID
+      //        register by a given step, then go to REISSUE
+      // REISSUE/ASSEMBLE:
+      //        N times, assign the resulting values to the output vector if thread is still active.
+      //        If condition is true, set the initial values of the pipeline first stage inputs,
+      //        incrementing the thread ID by a given step. Otherwise issue a bubble.
+      //        If reissued thread count is 0, set ACK to 1 and go to IDLE, otherwise repeat REISSUE.
+
+      getinitarg(args) =
+         car(map append [lbl;tp;v] in args do
+              if (lbl === entrybb)
+                 match tp with 'reg' -> [mk:value:reg(v)] | else -> [v]);
+                 
+      getstepval(args) =
+         car(map append [lbl;tp;v] in args do
+              if (not(lbl === entrybb))
+                 match tp with 'reg' -> [mk:value:reg(v)] | else -> [v]);
+
+      regdefs = mkhash();
+      mkregdefs() =
+        visit:hls0 /rec/ (top: ntop2) {
+           deep instr { i -> op(dst) };
+           deep iop (dstreg) {
+             phi -> []
+           | else -> ohashput(regdefs, dstreg, thisnodesrc())}};
+      mkregdefs();
+
+      negation = mkref([]);
+      getexitvalue(v, p) =
+         visit:hls0 /rec/ (value: v) {
+            once value {
+               // TODO: negation if needed
+               reg -> if (p) node() else symbols(neg) {
+                         negation := [mk:instr:i(mk:wire(), neg, mk:v(1), mk:op('NOT', [node()], mk:v(1)))];
+                         return mk:reg(neg)}
+             | else -> ccerror('WRONG-LOOP-EXIT'())}};
+
+      getexitcnd(bb) =
+         visit:hls0 /rec/ (bblock: bb) {
+            deep bblock {
+               bb -> next};
+            deep exit {
+               brc -> getexitvalue(c, tr === lexit)
+             | else -> ccerror('WRONG-CFG-SHAPE'())}};
+
+      getinsns(bb) =
+         collector(add, get) {
+            visit:hls0 /rec/ (bblock:bb) {
+               deep instr { i -> op(thisnodesrc()) };
+               deep iop(src) {
+                   phi -> []
+                 | else -> add(src) }};
+            get()};
+      
+      rregs = map [reg;itp;otp;args] in ephis do {
+         println('ARGS'(@args));
+         mk:reissuereg:r(nm=reg, tp = otp, init=getinitarg(args), step = getstepval(args))
+      };
+
+      exitcnd = getexitcnd(ohashget(bbsh, lentry));
+      stepinstrs = getinsns(ohashget(bbsh, lentry)) :: ^negation;
+      println('STEP'(lentry, stepinstrs));
+      final = getinsns(ohashget(bbsh, lexit));
+
+      enq = mk:bblock:bb(
+             tp = mk:enqueue_loop(
+                    id = 'default',
+                    pipeline = ppname,
+                    depth = length(bbs),
+                    thrid = mk:reg(idname),
+                    step = step,
+                    thrinit = mk:reg(stepid),
+                    
+                    exit_dst = accum_dst, 
+                    exit_src = accum_src,
+                    exit_type = exit_types,
+
+                    rregs = rregs,
+                    stepinstrs = stepinstrs,
+                    exitcnd = exitcnd,
+                    final = final
+                    ),
+             name = 'entry',
+             bs = [],
+             next = mk:ret());
+
+      pprnt = gen_pprint_ast(hls0, bblock);
+      println('-------------------*1');
+      println(pprnt(enq));
+      println('-------------------*2');
+      visit:hls0 /rec/ (top: ntop2) {
+         deep bblock {
+            bb -> tp(thisnodesrc())};
+         deep bbtype(src) {
+            fsm -> if (id === 'default') [] else [src]
+          | else -> [src]};
+         deep top {
+            module -> mk:node(body = enq : map append b in body do b)}}}}}
+
+
+
+%%%%%%%%%%

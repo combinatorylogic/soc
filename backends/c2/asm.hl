@@ -1,0 +1,271 @@
+% literate:
+
+
+\subsection{C2 assembly}
+
+The source assembly language with symbolic labels and constant expressions over absolute and relative addresses.
+
+\pfcode{
+ast c2asm {
+   instr = aluop(aop:op, reg:a, reg:b, reg:dst, expr:immed)
+         | jmp(expr:lbl)
+         | jmpr(expr:lbl)
+         | jmpc(reg:a, expr:lbl)
+         | jmpci(reg:a, reg:dst, expr:immed)
+         | ldimmed(reg:dst, expr:v)
+         | ext(eop10:op, reg:a, reg:b, reg:dst)
+         | ext2(eop32:op)
+         | load(reg:dst, reg:src, expr:off)
+         | store(reg:dst, reg:v, expr:off)
+         | storei(reg:dst, reg:v, expr:inc)
+
+         | nop()
+         | dbgnop(reg:src)
+
+         // Macros
+         | call(expr:lbl)
+         | ret()
+         | touch(reg:dst)
+         | mov(reg:src, reg:dst)
+         ;
+    reg is (.rnumber:id);
+    expr  = const(number:n)
+          | zero()
+          | label(ident:id)
+          | rel(ident:id)
+          | binop(op:o, expr:a, expr:b)
+          ;
+    entry = i(instr:i, .*pos:p)
+          | label(ident:lbl)
+          | globlabel(ident:lbl)
+          | data(.*expr:ds)
+          | align(number:n)
+          // After alignments are resolved:
+          | skip(number:n)
+          ;
+}}
+
+\subsection{Simple asm syntax}
+
+For debugging purposes and whatever else, a text-based syntax for the C2 assembly.
+
+\pfcode{
+parser c2asmp (pfront) {
+   !!Spaces;
+   [lexical:] := [lexical] => {ctoken = lexic};
+   [keyword:] := [keyword] ![IdentRest] => {ctoken = keyword};
+
+   c2asmp := slist<[c2entry]>:os [Spaces]* => os;
+   xnumber := [hexnumber] / [number];
+
+   c2entry :=
+              { ".align" [xnumber]:n => align(n) }
+           /  { ".data" slist<[c2expr]>:ns ";"? => data(@ns) }
+           /  { [c2instr]:i => i(i) }
+           /  { [qident]:id ":" => label(id) }
+           ;
+
+   c2binop := { "+" => `add }
+           /  { "-" => `sub }
+           /  { "&" => `and }
+           /  { "|" => `or }
+           /  { "==" => `eq }
+           /  { "!=" => `ne }
+           ; // TODO!
+           
+
+   c2instr := { [reg]:rd "=" [reg]:ra [c2binop]:op [reg]:rb "#" [c2expr]:imm => aluop(op, ra, rb, rd, imm) }
+           /  { [reg]:rd "=" [reg]:ra [c2binop]:op "#" [c2expr]:imm => aluop(op, ra, `R0, rd, imm) }
+           /  { [reg]:rd "=" [reg]:ra [c2binop]:op [reg]:rb => aluop(op, ra, rb, rd, zero()) }
+           /  { [reg]:rd "=" "#" [c2expr]:imm => ldimmed(rd, imm) }
+           /  { [reg]:rd "=" "M" "[" [reg]:rs "+" "#" [c2expr]:off "]" => load(rd, rs, off) }
+           /  { [reg]:rd "=" "M" "[" [reg]:rs "]" => load(rd, rs, zero()) }
+           /  { [reg]:rd "=" ext "(" [number]:code ")" [reg]:ra ","? [reg]:rb => ext(code, ra, rb, rd) }
+           /  { "M" "[" [reg]:rd "+" "#" [c2expr]:off "]" "=" [reg]:rs => store(rd, rs, off) }
+           /  { "M" "[" [reg]:rd "]" "=" [reg]:rs => store(rd, rs, zero()) }
+           /  { "M" "[" [reg]:rd "++" "#" [c2expr]:inc "]" "=" [reg]:rs => storei(rd, rs, inc) }
+           /  { jmp [c2expr]:lbl => jmp(lbl) }
+           /  { jmpr [c2expr]:lbl => jmpr(lbl) }
+           /  { jmpc "(" [reg]:r ")" [c2expr]:lbl => jmpc(r, lbl) }
+           /  { jmpci "(" [reg]:r ")" [reg]:d "#" [c2expr]:imm => jmpci(r, d, imm) }
+           /  { jmpci "(" [reg]:r ")" [reg]:d => jmpci(r, d, zero()) }
+           /  { nop => nop() }
+           ;
+
+   reg := { "r" [number]:n => n }
+       /  { "R" [number]:n => n }
+       /  { PC => `PC }
+       /  { SP => `SP }
+       /  { FP => `FP }
+       /  { SC => `SC }
+       ;
+   binary c2expr := (1000) [c2expr] "*" [c2expr] => binop(`mul, L, R)
+                 |  (1000) [c2expr] "/" [c2expr] => binop(`div, L, R)
+                 |  (500) [c2expr] "+" [c2expr] => binop(`add, L, R)
+                 |  (500) [c2expr] "-" [c2expr] => binop(`sub, L, R)
+                 |  [c2atom]
+                 ;
+   c2atom := { "(" [c2expr]:e ")" => e }
+          /  { "@" [qident]:id => rel(id) }
+          /  { [qident]:id => label(id) }
+          /  { [xnumber]:n => const(n) }
+          ;
+
+}}
+
+\pfcode{
+parser c2reg (c2asmp) {
+   c2reg := [reg]:r [Spaces]* => r;}}
+
+\subsection{Marking the labels}
+
+First pass is to count the instructions, mark the labels and replace align statements with precise skip blocks.
+
+\pfcode{
+function c2labels(start, src) {
+   lblsh = mkhash();
+   pos = mkref(start);
+   inc() = {pos := ^pos + 1;};
+   ret = map e in src do {
+     visit:c2asm (entry: e) {
+         deep entry {
+            i -> {p = ^pos; inc(); 'i'(i,p)}
+          | label -> {ohashput(lblsh, lbl, ^pos); node}
+          | globlabel -> {ohashput(lblsh, lbl, ^pos); node}
+          | data -> {pos := ^pos + length(ds); node}
+          | align -> {
+               cur = ^pos;
+               c1 = (cur / n) * n;
+               if (c1 == cur) 'skip'(0)
+               else {
+                  pos := ((cur/n) + 1) * n;
+                  'skip'(^pos - cur)}}
+          | skip -> ccerror('IMPOSSIBLE'())}}};
+   return lblsh:ret}}
+
+\pfcode{
+function c2macros(src) {
+  map e in src do {
+     visit:c2asm (entry: e) {
+         once instr {
+            call -> 'jmp'(lbl)
+          | ret -> 'jmp'('zero'())
+          | touch -> 'aluop'('add', dst, 'R0', dst, 'zero'())
+          | mov -> 'aluop'('add', src, 'R0', dst, 'zero'())
+          | else -> node}}}}}
+
+\subsection{Evaluating the constant expressions}
+
+Now, when all the labels are bound to exact locations, we can evaluate all the symbolic expressions containing
+labels.
+
+\pfcode{
+function c2exprs(lblsh, src) {
+  getop(o) =
+     {match o with
+        'add' -> fun(a,b) a+b
+      | 'sub' -> fun(a,b) a-b
+      | 'mul' -> fun(a,b) a*b
+      | 'div' -> fun(a,b) a/b
+      | else -> ccerror('UNKNOWN-OP'(o))};
+      
+  oneexpr(e, pos) =  
+     visit:c2asm (expr:e) {
+        deep expr {
+           const -> n
+         | zero -> 0
+         | label -> aif(chk = ohashget(lblsh, id)) chk else ccerror('UNKNOWN-LABEL'(id))
+         | rel -> aif(chk = ohashget(lblsh, id)) (chk - pos) else ccerror('UNKNOWN-LABEL'(id))
+         | binop -> (getop(o))(a, b)}};
+
+  oneinstr(i,pos) =
+     visit:c2asm (instr:i) {
+         once reg: {
+            nd1 = if (%symbol?(node)) parse %S<<(node) as c2reg else node;
+            match nd1 with
+               'PC' -> 31
+             | 'SP' -> 29
+             | 'FP' -> 30
+             | 'SC' -> 28
+             | 'R0' -> 0
+             | 'R1' -> 1
+             | else -> nd1};
+         once expr { else -> 'const'(oneexpr(node, pos)) }};
+
+  map e in src do {
+     visit:c2asm (entry: e) {
+         once entry {
+            i -> 'i'(oneinstr(i, car(p)))
+          | else -> node}}}}}
+
+\subsection{Codegen}
+
+And at this stage AST is suitable for a direct dumb codegen.
+
+\pfcode{
+function c2getaluop(op) {
+  match op with
+     'and' -> 1
+   | 'add' -> 2
+   | 'sub' -> 3
+   | 'or'  -> 4
+   | 'not' -> 5
+   | 'shl' -> 6
+   | 'shr' -> 7
+   | 'xor' -> 8
+   | 'eq'  -> 9
+   | 'ne' -> 10
+   | 'cmp' -> 11
+   | 'ashr' -> 12
+   | 'slt' -> 11:0
+   | 'sgt' -> 11:1
+   | 'sle' -> 11:2
+   | 'sge' -> 11:3
+   | 'ult' -> 11:4
+   | 'ugt' -> 11:5
+   | 'ule' -> 11:6
+   | 'uge' -> 11:7
+   | 'select' -> 14
+   | 'ext' -> 15}}
+
+\pfcode{
+function c2encode_entry(i) {
+   visit:c2asm (entry: i) {
+      deep entry {
+        i -> [i]
+      | label -> []
+      | globlabel -> []
+      | data -> ds
+      | align -> ccerror('IMPOSSIBLE'())
+      | skip -> map i in [0..n] do 0};
+      deep expr {
+        const -> n
+      | else -> ccerror('UNRESOLVED-CONSTEXPR'(node))};
+      deep instr {
+        aluop -> {
+          match c2getaluop(op) with
+            n:i -> .bitpack(32| 3:0, 4: n, 5:dst, 5:a, 5:b, 10: i)
+          | n -> .bitpack(32| 3:0, 4: n, 5:dst, 5:a, 5:b, 10: immed)}
+      | jmp   -> .bitpack(32| 1:1, 2: 0,  29:lbl)
+      | jmpr  -> .bitpack(32| 1:1, 1: 0, 1: 1, 29:lbl)
+      | jmpc  -> .bitpack(32| 1:1, 1: 1, 1: 0, 5: a, 24: lbl)
+      | jmpci -> .bitpack(32| 3:7, 5: a, 5: dst, 2:0, 17: immed)
+
+      | ldimmed -> .bitpack(32| 1:0, 1:1, 5:dst, 25: v)
+      
+      | ext   -> .bitpack(32| 3: 0, 4: 15, 5: dst, 5:a, 5:b, 10:op)
+      | ext2  -> op
+
+      | load  -> .bitpack(32| 2: 0, 1: 1, 2: 0, 5:dst, 5:src, 16:off)
+
+      | store -> .bitpack(32| 2: 0, 1: 1, 2: 1, 5:v, 5:dst, 17:off)
+      | storei -> .bitpack(32| 2: 0, 1: 1, 2: 3, 5:v, 5:dst, 17:inc)
+
+      | nop   -> 0
+      | dbgnop ->
+                  .bitpack(32| 3:0, 4: 0, 5:src, 5:0, 5:0, 10: 0)
+      }}}}
+
+
+
+%%%%

@@ -1,0 +1,1101 @@
+% literate:
+
+%TODO: some essential features are still missing:
+% * indirect calls, indirect branching,
+% * switch (jump tables),
+% * global variables.
+% * constants that do not fit into immediates
+
+\phcode{
+include "../../clike/backend/ll-ast.hl"
+include "./legalise.hl"
+}
+
+\phcode{
+define c2_enable_muops = mkref([])
+define c2_ram_end = mkref(16384)
+}
+
+\section{An optimising C2 backend}
+
+
+We assume that the IR is already legalised by now - i.e., all the unsupported
+operations are replaced with either runtime library calls or intrinsics for
+extended instructions. No unsupported bitwidth are expected at this stage (i.e.,
+32 bit words only and nothing else). Verilog inlining (and HLS) is resolved and
+replaced with intrinsic calls.
+
+C2 core is a very simple RISC, with load, store, 32 registers (of which R0 is
+hardwired to 0, R1 is hardwire to 1, and R31 is hardwired to the current
+PC). There is a special encoding for the extended operations, which are all
+expected to have 2 register arguments and 1 register writeback (if there is
+nothing to write back, R0 must be used). Some extended ops can be blocking
+(e.g., they will stall the entire pipeline). The other operations are never
+blocking, though there are two microcoded operations (if enabled) - call and
+ret.
+
+Hazards must be dealth with explicitly, by either reordering the instructions or
+by inserting nops. 
+
+
+\subsection{Lowering GEPs to arithmetics}
+
+Given that most GEPs end up being used in a load or a store instruction, and
+most GEPs are adding a constant offset, they must be fused into load and store
+instructions directly (representing the new fused instructions with intrinsic
+calls). Still, those GEPs that end up being bitcasted to integers, passed as
+function arguments, etc., must be translated to a proper arithmetic.
+
+We expect GEP pointer types to be resolved here.
+
+\pfcode{
+ast c2descr {
+   expr = offset(expr:e, number:n)
+        | add(expr:a, expr:b)
+        | addrmul(expr:e, number:n)
+        | src(irval:v)
+        ;}}
+
+\pfcode{
+function c2_type_size(tp) {
+  visit:ir2(irtype:tp) {
+   deep irtype {
+     integer -> 1 // should be legalised already
+   | array -> t * foldl( ( %* ), 1, dims)
+   | pointer -> 1
+   | struct -> foldl( ( %+ ), 0, elts)
+   | structref -> 0
+   | %function -> 0
+   | varfunction -> 0
+   | alias -> 0
+   | void -> 0
+
+   | else -> ccerror('ILLEGALTYPE'(tp))
+   }}}}
+
+\pfcode{
+function c2_ir2_numeric(v)
+  visit:ir2 (irval: v) {
+     once irval {
+        integer -> v
+      | else -> []}}}
+
+Besides elaborating the GEPs we're also fusing alloca references here, introducing a special "global"
+value \verb|*FP*|.
+
+\pfcode{
+function c2_gep_elaboration(src) {
+  // 1. Cache the definitions
+  vht = mkhash(); alloca_offsets = mkhash();
+  docache() =
+     visit:ir2 (irtoplevel: src) {
+        once irpair : ohashput(vht, nm, e)};
+  docache();
+
+  doallocas() = collector(aadd, aget) {
+     visit:ir2 (irtoplevel: src) {
+        deep irpair : e(nm);
+        deep irexpr(dstnm) {
+           alloca -> aadd([dstnm; c2_type_size(t)])
+         | else -> []}};
+     allocas = aget();
+     foldl(fun (offset, nxt) {
+             <[nm;size]> = nxt;
+              ohashput(alloca_offsets, nm, 0-((offset+size)-1));
+              return offset + size}, 0, allocas)};
+  doallocas();
+
+  // 2. Try to fuse simple GEPs into all the load and store instructions
+  struct_shifts(elts) = {
+     do loop(es=elts, pos = 0) {
+        match es with
+          hd : tl -> {
+             npos = c2_type_size(hd) + pos;
+             pos : loop(tl, npos)
+          }
+        | [] -> []
+     }
+   };
+  describe_gep_body(ptr, idxs, tp) = {
+     do loop(p = ptr, is = idxs, tp = tp) {
+        match is with
+           i:tl -> {
+             simple(t) = {
+               typewidth = c2_type_size(t);
+               coff = c2_ir2_numeric(i);
+               np = if (coff) {
+                      'offset'(p, coff * typewidth)
+                    } else {
+                      'add'(p, 'addrmul'('src'(i), typewidth))
+                    };
+               loop(np, tl, t)};
+             visit:ir2 (irtype: tp) {
+               once irtype {
+                  struct -> {
+                     eltnum = c2_ir2_numeric(i);
+                     if (not(eltnum)) ccerror('CANNOT-INDEX-STRUCT-ELT'());
+                     eltoffset = nth(eltnum, struct_shifts(elts));
+                     elttp = nth(eltnum, elts);
+                     np = 'offset'(p, eltoffset);
+                     loop(np, tl, elttp)}
+                | pointer -> simple(t)
+                | array   -> simple(t)
+                | else    -> simple(tp)}}}
+         | else -> p}};
+
+  describe_opt(descr) =
+     do iloop (d = descr) {
+       match d with
+         'offset'('offset'(v, n1), n2) -> iloop('offset'(v, n1+n2))
+       | else -> d};
+
+  try_fuse_inner(ptr, nm, e) =
+     visit:ir2 (irexpr: e) {
+        deep irexpr {
+           alloca -> {
+              offset = ohashget(alloca_offsets, nm);
+              return 'offset'('src'('global'('*FP*')), offset)}
+         | else -> 'src'(ptr)}};
+
+  try_fuse(ptr) = {
+     visit:ir2 (irval: ptr) {
+        once irval {
+           var ->
+             aif(chk = ohashget(vht, nm)) {
+               try_fuse_inner(ptr, nm, chk)
+             } else 'src'(node)
+         | else -> 'src'(node)}}};
+
+  describe_gep_inner(e) = {
+     visit:ir2 (irexpr: e) {
+        once irexpr {
+           getelementptr -> {
+              ptrx = try_fuse(ptr);
+              describe_opt(describe_gep_body(ptrx, idxs, car(ptrtp)))}
+        |  else -> 'not-a-gep'()}}};
+
+  describe_gep(ptr) =
+     visit:ir2 (irval: ptr) {
+        once irval {
+           var -> {
+                aif(chk = ohashget(vht, nm)) {
+                   describe_gep_inner(chk)
+                } else 'not-a-gep'()}
+         | else -> 'not-a-gep'()}};
+
+  fusegeps(tp, dstnm, ptr, e, orig) = {
+     g = describe_gep(ptr);
+     match g with
+       'offset'('src'(v), c) -> {
+         match tp with
+           'load' ->
+              [dstnm; 'call'('c2:load', v, 'integer'(c))]
+         | 'store' ->
+              [dstnm; 'call'('c2:store', v, e, 'integer'(c))]}
+     | else -> [dstnm; orig]};
+
+  fusefirst(src) =
+     visit:ir2 (irtoplevel: src) {
+        deep irpair: e(nm);
+        deep irexpr(dst) {
+           store -> fusegeps('store', dst, ptr, e, node)
+         | load  -> fusegeps('load',  dst, ptr, [], node)
+         | else  -> [dst; node]}};
+  src_fused = fusefirst(src);
+
+  // 3. A cleanup pass - remove the unused GEPs, in case they were killed by the previous pass
+  // TODO!
+  src_clean = src_fused;
+
+  // 4. Convert all the remaining GEPs into sequences of arithmetic instructions
+  renamesht = mkhash();
+  expand_gep(dst, ptr, idxs, tp) = {
+     ptrx = try_fuse(ptr);
+     descr = describe_gep_body(ptrx, idxs, tp);
+     collector(add, get) {
+        ret = visit:c2descr (expr: descr) {
+           deep expr {
+              src -> v
+            | offset -> if (n!=0) symbols(nnm) {add([nnm;'binary'('Add', e, 'integer'(n))]); 'var'(nnm)}
+                        else e
+            | add -> symbols(nnm) {add([nnm;'binary'('Add', a, b)]); 'var'(nnm)}
+            | addrmul -> symbols(nnm) {
+                 r = (match n with
+                        1 -> e
+                        // TODO: do something else if barrel shifter is not available
+                      | 2 -> {add([nnm;'binary'('Shl', e, 'integer'(1))]); []}
+                      | 4 -> {add([nnm;'binary'('Shl', e, 'integer'(2))]); []}
+                      | 8 -> {add([nnm;'binary'('Shl', e, 'integer'(3))]); []}
+                      | 16 -> {add([nnm;'binary'('Shl', e, 'integer'(4))]); []}
+                      | else -> {add([nnm; 'call'('c2:imul', e, 'integer'(n))]); []});
+                 if(r) r else 'var'(nnm)}}};
+        n1 = cadr(ret); // assuming it's 'var'(lastname);
+        // Now, there is a special case where no actions are taken and the destination
+        //  pointer is assigned to the source. This must be handled by renaming.
+        insns = get();
+        if (not(insns)) {
+           ohashput(renamesht, dst, ret);
+        };
+        return map [nm;vl] in insns do
+           if(nm === n1) [dst;vl] else [nm;vl]}};
+ 
+  tmp1 = visit:ir2 (irtoplevel: src_clean) {
+    deep irbblock {
+       bblock -> mk:node(c = map append c in c do c)};
+    deep irpair: e(nm);
+    deep irexpr(dst) {
+       getelementptr -> expand_gep(dst, ptr, idxs, car(ptrtp))
+     | alloca -> expand_gep(dst, 'var'(dst), ['integer'(0)], t)::[[gensym(); node]]
+     | else -> [[dst; node]]}};
+  // Now apply the renames, if any
+  visit:ir2 (irtoplevel: tmp1) {
+     deep irval {
+        var -> aif(chk = ohashget(renamesht, nm)) chk else node
+      | else -> node}}}}
+
+\subsection{Out of SSA}
+
+\pfcode{
+ast ir2nossa : ir2 () {
+  irexpr += value(irval:v);
+}}
+
+
+\pfcode{
+%"ir2:irtoplevel -> ir2nossa:irtoplevel"
+function c2_out_of_ssa(src) {
+  // 1. Count phis and their incoming bblocks
+  incomings = mkhash();
+  addincoming(nm, v) =
+     ohashput(incomings, nm, ohashget(incomings, nm) :: [v]);
+  dophi(dstnm, tp, origs) =
+     iter [v; lbl] in origs do
+        addincoming(lbl, [dstnm; 'value'(v)]);
+  visit:ir2 (irtoplevel: src) {
+     deep irpair: e(nm);
+     deep irexpr(dstnm) {
+        phi -> dophi(dstnm, t, dsts)
+      | else -> []}};
+      
+  // 2. TODO!!! Fuse phi into registers, if:
+  //    - register is coming from a backedge
+  //    - or the only register in the variants list
+  //    - and, phi register is not used in any bb dominated by the incoming register bb
+  //      and in the incoming register bb below its definition. 
+  // 3. Insert register writes in all the incomings
+  visit:ir2 (irtoplevel: src) {
+     deep irbblock {
+        bblock -> {
+           incs = ohashget(incomings, name);
+           mk:node(c = (map append c do c) :: incs)}};
+     deep irpair: e(nm);
+     deep irexpr(dstnm) {
+        phi -> []
+      | call -> {match fn with
+                    '_intptr' -> [[dstnm;'value'(car(args))]]
+                  | '_nop' -> []
+                  | else -> [[dstnm;node]]}
+      | else -> [[dstnm; node]]}}}}
+
+\subsection{Lowering to ISA}
+
+By now, we do not have GEPs, phis, illegal binops, icmps and convops. Everything
+in the IR have a direct mapping to the ISA (maybe not optimal - this should be
+resolved with intrinsics in previous passes).  The resulting IR here is almost a
+C2 ISA, but with abstract registers and unlimited immediates.
+
+After this pass we'll have a flat sequence of instructions and macro
+instructions.
+
+
+
+\pfcode{
+ast ir2isa : ir2nossa () {
+   irbblock = bblock(lblident:name,
+                     .*c2instr:ss);
+   c2instr =
+      label(lblident:name)
+    | alloca(number:size)
+    | load(c2val:dst, c2val:ptr, c2val:imm)
+    | store(c2val:ptr, c2val:v, c2val:imm)
+    | storei(c2val:ptr, c2val:v, c2val:imm)
+    | jmpc(c2val:cnd, c2label:l)
+    | jmpr(c2label:l)
+    | jmp(c2label:l)
+    | aluop(c2aluop:op, c2val:l, c2val:r, c2val:dst, c2val:imm)
+    | select_macro(c2val:dst, c2val:vif, c2val:vthen, c2val:velse)
+    | move_macro(c2val:dst, c2val:src)
+    | ret_macro(c2val:v)
+    | vret_macro()
+
+    | nop()
+    | dbgnop(c2val:rnum)
+
+    // High level macros
+    | abi_savereg_macro(ident:id)
+    | abi_restorereg_macro(ident:id)
+    | abi_preamble_macro()
+
+    // Asm macros
+    | call(c2label:l)
+    | touch(c2val:dst)
+    | mov(c2val:src, c2val:dst)
+
+    // Nodes that appear only after the macro lowering:
+    | ldimmed(c2val:dst, c2val:src)
+    | jmpci(c2val:cnd, c2val:dst, c2val:imm)
+    | ret()
+    ;
+   c2val = vreg(ident:nm)
+         | reg(ident:nm)
+         | zero()
+         | const(number:n)
+         ;
+   c2label = rel(lblident:name)
+           | abs(lblident:name)
+           ;
+}}
+
+
+\pfcode{
+function c2_mkbinop(op, dst, l, r) {
+   match op with 
+      'Add' -> 'aluop'('add', l, r, 'vreg'(dst), 'zero'()) // TODO: move small constants to immediates
+    | 'And' -> 'aluop'('and', l, r, 'vreg'(dst), 'zero'())
+    | 'Sub' -> 'aluop'('sub', l, r, 'vreg'(dst), 'zero'())
+    | 'LShr' -> 'aluop'('shr', l, r, 'vreg'(dst), 'zero'())
+    | 'AShr' -> 'aluop'('ashr', l, r, 'vreg'(dst), 'zero'())
+    | 'Shl' -> 'aluop'('shl', l, r, 'vreg'(dst), 'zero'())
+    | 'EQ'  -> 'aluop'('eq',  l, r, 'vreg'(dst), 'zero'())
+    | 'NE'  -> 'aluop'('ne',  l, r, 'vreg'(dst), 'zero'())
+    | 'SLT' -> 'aluop'('slt',  l, r, 'vreg'(dst), 'zero'())
+    | 'SGT' -> 'aluop'('sgt',  l, r, 'vreg'(dst), 'zero'())
+    | 'SLE' -> 'aluop'('sle',  l, r, 'vreg'(dst), 'zero'())
+    | 'SGE' -> 'aluop'('sge',  l, r, 'vreg'(dst), 'zero'())
+    | 'ULT' -> 'aluop'('ult',  l, r, 'vreg'(dst), 'zero'())
+    | 'UGT' -> 'aluop'('ugt',  l, r, 'vreg'(dst), 'zero'())
+    | 'ULE' -> 'aluop'('ule',  l, r, 'vreg'(dst), 'zero'())
+    | 'UGE' -> 'aluop'('uge',  l, r, 'vreg'(dst), 'zero'())
+    | else -> ccerror('TODO'(op))}}
+
+\pfcode{
+parser c2intrinsicfn () {
+   c2intrinsicfn := { "c2:" .* => `i }
+                 /  { .* => `n }
+                 ;}
+
+function c2_is_intrinsic(fn) {
+   // check if starts with 'c2:'
+   match fn with
+      '_custom2_1' -> true
+    | '_custom2_0' -> true
+    | '_custom1_0' -> true
+    | '_custom2_0b' -> true
+    | '_custom1_0b' -> true
+    | '_custom1_1' -> true
+    | '_custom0_1' -> true
+    | '_custom0_0' -> true
+    | '_custom0_0b' -> true
+    | '_dbgreg' -> true
+    | else -> return (parse (%S<<(fn)) as c2intrinsicfn) === 'i'
+}}
+
+\pfcode{
+function c2_lower_intrinsic(dst, fn, args) {
+   getconst(v) = match v with 'const'(n) -> n | else -> ccerror('NOCONST'(v));
+   blk(v) =
+      'const'(getconst(v)*2 + 1);
+   noblk(v) =
+      'const'(getconst(v)*2);
+   symcase fn {
+      %c2:load -> ['load'('vreg'(dst), @args)]
+    | %c2:store -> ['store'(@args)]
+    | %_custom2_1 -> ['aluop'('ext', cadr(args), caddr(args), 'vreg'(dst), noblk(car(args)))]
+    | %_custom2_0 -> ['aluop'('ext', cadr(args), caddr(args), 'reg'('R0'), noblk(car(args)))]
+    | %_custom2_0b -> ['aluop'('ext', cadr(args), caddr(args), 'reg'('R0'), blk(car(args)))]
+    | %_custom1_1 -> ['aluop'('ext', 'reg'('R0'), cadr(args),  'vreg'(dst), noblk(car(args)))]
+    | %_custom1_0 -> ['aluop'('ext', 'reg'('R0'), cadr(args), 'reg'('R0'), noblk(car(args)))]
+    | %_custom1_0b -> ['aluop'('ext', 'reg'('R0'), cadr(args), 'reg'('R0'), blk(car(args)))]
+    | %_custom0_1 -> ['aluop'('ext', 'reg'('R0'), 'reg'('R0'), 'vreg'(dst), noblk(car(args)))]
+    | %_custom0_0 -> ['aluop'('ext', 'reg'('R0'), 'reg'('R0'), 'reg'('R0'), noblk(car(args)))]
+    | %_custom0_0b -> ['aluop'('ext', 'reg'('R0'), 'reg'('R0'), 'reg'('R0'), blk(car(args)))]
+    | %_dbgreg -> ['dbgnop'(car(args))]
+    // TODO: more intrinsics
+    | else -> ccerror('INTRINSIC'(fn))
+   }}}
+
+\pfcode{
+function c2_lower_call(firstargs, dst, fn, args) {
+   // Preparing for a call:
+   // Pushing the arguments
+   // pushing SP (before the args list), FP, PC
+   // Jumping to the destination
+   //
+   // Pass first 3 argument words as R3,R4,R5; The rest
+   // goes to the stack.
+   //
+   // Note: caller must save registers R3..R5, R15 .. R28,
+   // Callee saves R6 .. R14
+   //
+   // Return value is in R2
+   //
+   // Ret macro should do the following (after restoring the registers and setting R2):
+   //   FP = [SP+2]
+   //   SC = [SP+1]
+   //   SP = [SP+3]
+   //   JMP SC
+   //
+   // Function prologue does the following:
+   //  Set FP to SP,
+   //  Set SP to FP - (allocas size)
+   //  Save the callee-save registers
+   //
+   renames = mkhash();
+   check_savearg(r) =
+      visit:ir2isa (c2val: r) {
+         once c2val {
+            vreg -> if (memq(nm, firstargs)) {
+              nnm = gensym();
+              ohashput(renames, nm, 'vreg'(nnm));
+              [['vreg'(nnm);node]]
+            } else []
+          | else -> []}};
+   saverename(r) =
+       visit:ir2isa (c2val: r) {
+         once c2val {
+            vreg -> aif(chk = ohashget(renames, nm)) {
+              chk
+            } else node
+          | else -> node}};
+   // Check if we're referring to this function register arguments in the call - if so, they must be
+   // saved before the call and then restored, unless it's a tautology.
+   <regargs:stackargs> =
+     (match args with
+        [a;b;c;@d] -> [a;b;c]:d
+      | else -> args:[]);
+   //saveargs = map append r in regargs do check_savearg(r);
+   saveargs = map append [x;y] in zip(regargs, firstargs) do check_savearg('vreg'(y));
+   cnm = gensym();
+   [@map [dst;src] in saveargs do 'move_macro'(dst, src);
+    'abi_savereg_macro'(cnm);
+    @map a in regargs count i do
+      'move_macro'('reg'(%Sm<<('R', 3+i)), saverename(a));
+    @map a in stackargs do
+      'storei'('reg'('SP'), saverename(a), 'const'(-1));
+    @if (^c2_enable_muops) ['call'('label'(fn))]
+     else 
+      ['storei'('reg'('SP'), 'reg'('SP'), 'const'(-1));
+       'storei'('reg'('SP'), 'reg'('FP'), 'const'(-1));
+       'storei'('reg'('SP'), 'reg'('PC'), 'const'(-1));
+       'jmp'('label'(fn))];
+    'move_macro'('vreg'(dst), 'reg'('R2'));
+    @if (stackargs) ['aluop'('add', 'SP', 'R0', 'SP', 'const'(length(stackargs)))];
+    'abi_restorereg_macro'(cnm);
+    @map [src;dst] in saveargs do 'move_macro'(dst, src)
+    ]
+}}
+
+\pfcode{
+function c2_lower_callptr(dst, fn, args) {
+  // TODO!
+  ccerror('TODO:LOWER-CALLPTR'())
+}}
+
+\pfcode{
+function c2_lower_ir(src) {
+   firstargs = visit:ir2nossa(irtoplevel:src) {
+      deep irarg : name;
+      deep irtoplevel {
+         %function -> {
+            match args with
+               [a;b;c;@d] -> [a;b;c]
+             | else -> args}
+        | else -> ccerror('IMPOSSIBLE'())}};
+   visit:ir2nossa (irtoplevel: src) {
+      deep irbblock {
+         bblock -> {ret = ['label'(name)]::(if(name==='entry') ['abi_preamble_macro'()])::
+                               (map append c in c do c)::t;
+                    return 'bblock'(name, @ret)}};
+      deep irpair: e(nm);
+      deep irexpr(dst) {
+         binary -> [c2_mkbinop(op, dst, l, r)]
+       | alloca -> ['alloca'(c2_type_size(t))]
+       | store  -> ['store'(ptr, e, 'zero'())]
+       | load   -> ['load'('vreg'(dst), ptr, 'zero'())]
+       | icmp   -> [c2_mkbinop(vcond, dst, lhs, rhs)]
+       | select -> ['select_macro'('vreg'(dst),
+                                    vif, vthen, velse)] // Must also be optimised with peephole - if vif
+                                                     // is generated by the previous instruction, the next
+                                                     // one is just 'SELECT', no need to load the condition
+       | call   -> if (c2_is_intrinsic(fn))
+                      c2_lower_intrinsic(dst, fn, args)
+                   else
+                      c2_lower_call(firstargs, dst, fn, args)
+       | callptr  -> c2_lower_callptr(dst, fn, args)
+       | value  -> ['move_macro'('vreg'(dst), v)]
+       | convop -> ['move_macro'('vreg'(dst), v)] // TODO!
+       | else   -> ccerror('ILLEGAL-IR-INSTRUCTION'(node))};
+      deep irterm {
+       | ret -> ['ret_macro'(value)]
+       | vret -> ['vret_macro'()]
+       | br  -> ['jmpc'(cnd, 'rel'(tr));
+                 'jmpr'('rel'(fl))] // to be cleared by peephole optimiser if followed by 'label'(fl)
+       | br_label -> ['jmpr'('rel'(nm))]
+       | else -> ccerror('UNSUPPORTED-YET'(node))};
+      deep irval {
+         integer -> 'const'(v)
+       | zero -> 'const'(0)
+       | var     -> 'vreg'(nm)
+       | global  -> if(nm === '*FP*') 'reg'('FP') else 'label'(nm)
+       | globalfun -> 'label'(nm)
+       | else   -> ccerror('ILLEGAL-IR-VALUE'(node))}}}}
+
+
+\subsection{Lower arguments}
+
+\pfcode{
+function c2_lower_args(src) {
+  argsh = mkhash();
+  visit:ir2isa (irtoplevel: src) {
+     deep irtoplevel {
+       %function -> {nargs = length(args); iter i in args count n do i(nargs, n)}
+     | else -> []};
+     deep irarg : fun(nargs, num) {
+        if (num > 2) 
+          ohashput(argsh, name, (nargs - num) - 1)
+        else
+          ohashput(argsh, name, %Sm<<('R', num + 3)); node}};
+
+  // TODO: if the same argument is used more than once in this instruction, only load it once
+  doinstr(add, i) = {
+     visit:ir2isa (c2instr: i) {
+        once c2val {
+           vreg -> 
+             aif(chk = ohashget(argsh, nm))
+              {if (%symbol?(chk)) 'reg'(chk)
+               else symbols(tmp) {
+                 add('load'('vreg'(tmp), 'reg'('FP'), 'const'(0-chk)));
+                 return 'vreg'(tmp)
+               }} else node
+         | else -> node}}};
+  visit:ir2isa (irtoplevel: src) {
+     deep irbblock {
+        bblock -> mk:node(ss = map append s in ss do s)};
+     once c2instr {
+        else -> collector(add, get) { ret = doinstr(add, node); get()::[ret] }}}}}
+
+\subsection{Immediate legalisation}
+
+\pfcode{
+function c2_signed_range(bits) {
+   shl(n) =
+     notnet(int n) {
+        int tmp = 1 << n;
+        leave (object)tmp;};
+   min = 0 - (shl(bits-1));
+   max = shl(bits-1);
+   return min:max
+}}
+
+\pfcode{
+function c2_legalise_immediates(src) {
+   iszero(i) =
+      visit:ir2isa (c2val: i) {
+         once c2val {
+            reg -> nm === 'R0'
+          | zero -> true
+          | const -> n == 0
+          | else -> []}};
+   isconst(i, bits) = {
+     <min:max> = c2_signed_range(bits);
+      visit:ir2isa (c2val: i) {
+         once c2val {
+            reg -> (nm === 'R0')||(nm === 'R1')
+          | zero -> true
+          | const -> (n > min) && (n < max)
+          | else -> []}}};
+   isconstx(i, bits) = {
+      <min:max> = c2_signed_range(bits);
+       visit:ir2isa (c2val: i) {
+         once c2val {
+            const -> (n!=0) && (n!=1) && (n > min) && (n < max)
+          | else -> []}}};
+   doinstr(add, i) = {
+      doimm(imm, bits) = {
+         if (isconst(imm, bits)) imm
+         else ccerror('ILLEGAL-IMMEDIATE'(imm))};
+      dovalue(v) =
+        visit:ir2isa (c2val: v) {
+           once c2val {
+              vreg -> node
+            | reg  -> node
+            | zero -> 'reg'('R0')
+            | const -> if (n == 1) 'reg'('R1')
+                       else if (n == 0) 'reg'('R0')
+                       else symbols(nn) {add('move_macro'('vreg'(nn), node)); 'vreg'(nn)}}};
+      visit:ir2isa (c2instr: i) {
+      deep c2instr {
+         load -> mk:node(dst = dovalue(dst), ptr = dovalue(ptr), imm = doimm(imm, 17))
+       | store -> mk:node(ptr = dovalue(ptr), v = dovalue(v), imm = doimm(imm, 17))
+       | storei -> mk:node(ptr = dovalue(ptr), v = dovalue(v), imm = doimm(imm, 17))
+       | jmpc -> mk:node(cnd = dovalue(cnd))
+       | aluop -> {
+            if (op == 'add' && iszero(imm) && isconstx(r, 10))
+               mk:node(l = dovalue(l), r = 'reg'('R0'), imm = r)
+            else if (op == 'add' && iszero(imm) && isconstx(l, 10))
+               mk:node(r = dovalue(r), l = 'reg'('R0'), imm = l)
+            else // TODO: more special cases
+               mk:node(l = dovalue(l), r = dovalue(r), dst = dovalue(dst), imm=doimm(imm, 10))}
+       | select_macro -> mk:node(vif = dovalue(vif), vthen = dovalue(vthen), velse = dovalue(velse))
+       | ret_macro -> mk:node(v = dovalue(v))
+       | mov -> mk:node(src=dovalue(src),dst=dovalue(dst))
+       | touch -> mk:node(dst=dovalue(dst))
+       | else -> node}}};
+   visit:ir2isa (irtoplevel: src) {
+     deep irbblock {
+        bblock -> mk:node(ss = map append s in ss do s)};
+     once c2instr {
+        else -> collector(add, get) { ret = doinstr(add, node); get()::[ret] }}}}}
+
+\subsection{Register allocation}
+
+Can use R3 (R5, depending on configutation) to R28 general purpose registers for
+allocation.  In case if more registers are needed, allocate up to R26 straight
+and use R27 and R28 as scratch registers for spilling. If there are any
+registers (besides R0, R1, R2, R29, R30, R31) are used explicitly, exclude them
+from allocation.
+
+\pfcode{
+function c2_extract_regalloc(src, typ, ctest) {
+   doinstr(i) =
+     collector(genadd, genget)
+     collector(killadd, killget) {
+        isreg1(v) = visit:ir2isa (c2val: v) {
+           once c2val {
+             vreg -> nm
+           | else -> []}};
+        isreg2(v) = visit:ir2isa (c2val: v) {
+           once c2val {
+             reg -> if (ctest(nm)) nm else []
+           | else -> []}};
+        isreg = if (typ === 'regalloc') isreg1 else isreg2;
+        gen(v) = aif(chk = isreg(v)) genadd('V'(chk,'R'));
+        kill(v) = aif(chk = isreg(v)) killadd('V'(chk,'R'));
+        getlabel(l) =
+          visit:ir2isa (c2label: l) {
+            deep c2label {
+               rel -> name
+             | abs -> name}};
+        ret = visit:ir2isa (c2instr: i) {
+           deep c2instr {
+              label -> 'label'(name)
+            | alloca -> {[]}
+            | load -> {kill(dst);gen(ptr); []}
+            | store -> {gen(ptr);gen(v); []} // TODO: kill ptr?
+            | storei -> {gen(ptr);gen(v); []} // TODO: kill ptr?
+            | jmpc -> {gen(cnd);'gotoconds'([], [getlabel(l)])}
+            | jmpr -> {'goto'(getlabel(l))}
+            | aluop -> {kill(dst);gen(l);gen(r);[]}
+            | mov -> {kill(dst); gen(src);[]}
+            | touch -> {gen(dst)}
+            | select_macro -> {kill(dst);gen(vif);gen(vthen);gen(velse); []}
+            | move_macro -> {kill(dst);gen(src);[]}
+            | ret_macro -> {gen(v);'goto'('END')}
+            | vret_macro -> 'goto'('END')
+
+            | abi_savereg_macro -> 'label'(id)
+
+            | else -> []}};
+        lgen = genget();
+        lkill = killget();
+        match ret with 
+           [] -> 'genkill'(lkill, lgen)
+         | 'gotoconds'(x,@rest) -> 'gotoconds'(lgen,@rest)
+         | else -> ret};
+   'goto'('entry'):
+    visit:ir2isa (irtoplevel: src) {
+       deep irtoplevel {
+          %function -> body
+        | else -> ccerror('OOPSIE'())};
+       deep ircode : map append b in bs do b;
+       deep irbblock {
+          bblock -> ss};
+       once c2instr { else -> doinstr(node) }}}}
+
+\pfcode{
+function c2_regalloc(src) {
+   rs = c2_extract_regalloc(src, 'regalloc', []);
+   allocd = %r3:allocateregisters([], %r3:lgraphs(rs));
+   // rewrite
+   visit:ir2isa (irtoplevel: src) {
+      deep c2val {
+         vreg -> aif (chk = hashget(allocd, nm)) {
+           'vreg'(chk)
+         } else ccerror('UNALLOCATED'(nm))
+       | else -> node}}}}
+
+\subsection{Spills}
+
+\pfcode{
+function c2_spills(src) {
+   // TODO!!!
+   nargs = mkref(0);
+   getvregs() = {
+      vrs = mkhash();
+      visit:ir2isa(irtoplevel: src) {
+         deep irtoplevel {
+            %function -> nargs := length(args)
+          | else -> []};
+         once c2val {
+            vreg -> ohashput(vrs, nm, nm)
+          | else -> []}};
+      hashmap(fun(k,v) k, vrs)};
+   vregs = getvregs();
+   if (length(vregs) > 23) {
+      ccerror('TODO:IMPLEMENT-SPILLING'(vregs))
+   };
+   vrmap = mkhash();
+   rstart = 6;// if(^nargs > 2) 6 else 3+^nargs;
+   iter v in vregs count i do ohashput(vrmap, v, %Sm<<('R', rstart+i));
+   visit:ir2isa(irtoplevel:src) {
+      deep c2val {
+         vreg -> 'reg'(ohashget(vrmap, nm))
+       | else -> node}}}}
+
+\subsection{Macro and ABI lowering}
+
+The previous passes introduced a number of macro instructions which should be
+unrolled first before we can do the hazard management (i.e., delay slot
+expansion). This is also the time we do the ABI thing - save the registers, bump
+the SP, etc.
+
+In order to expand the preamble and caller save and restore macros we need to
+collect the allocas (move SP), then collect the used registers and build
+liveness information for each save macro site.
+
+
+\pfcode{
+define c2_noregs = ['R0';'R1';'R2';'FP';'PC';'SC']
+define c2_genregs = map r in [6..29] do %Sm<<('R',r)
+define c2_caller_save_regs = ['R3';'R4';'R5']::(map r in [15..29] do %Sm<<('R',r))
+define c2_callee_save_regs = map r in [6..14] do %Sm<<('R',r)
+
+function c2_lower_macros(src) {
+  // Prepare the data
+  alloc = mkref(0); nargs = mkref(0);
+  iter:ir2isa(irtoplevel:src) {
+     deep irtoplevel {
+            %function -> nargs := length(args)
+          | else -> []};
+     once c2instr {
+        alloca -> alloc := ^alloc + size
+      | else -> []}};
+
+  doregs() = {
+    rht = mkhash();
+    visit:ir2isa(irtoplevel: src) {
+      once c2val {
+        reg -> if (memq(nm, c2_callee_save_regs)) ohashput(rht, nm, nm)
+      | else -> []}};
+    hashmap(fun(k,v) k, rht)};
+  saveregs = doregs(); // all the callee-save registers used here
+  framesize = ^alloc;
+  // Do the liveness again
+  rg = c2_extract_regalloc(src, 'liveness',
+         fun(nm) {
+            memq(nm, c2_caller_save_regs)
+         });
+  live1 = %r3:intermediate1(rg);
+  live  = %r3:solve(live1);
+  liveht = mkhash();
+  iter x in live do {
+     <[id;_;_;regs;@rest]> = %a->l(x);
+      ohashput(liveht, id, map r in regs do car(r))};
+  // TODO!!!
+
+  // Rewrite macros
+  retcode =
+      if(^c2_enable_muops)
+           [@map s in reverse(saveregs) count i do
+               'load'('reg'(s), 'reg'('SP'), 'const'(1 + i));
+            'ret'()]
+      else
+           [@map s in reverse(saveregs) count i do
+               'load'('reg'(s), 'reg'('SP'), 'const'(1 + i));
+            'load'('reg'('SC'), 'reg'('FP'), 'const'(1));
+            'load'('reg'('SP'), 'reg'('FP'), 'const'(3));
+            'load'('reg'('FP'), 'reg'('FP'), 'const'(2));
+            'jmpci'('reg'('R1'), 'reg'('SC'), 'const'(2))];
+  visit:ir2isa(irtoplevel: src) {
+     deep irbblock {
+        bblock -> mk:node(ss = map append s in ss do s)};
+     deep c2instr {
+        alloca -> []
+      | select_macro -> ['touch'(vif);
+                         'aluop'('select', vthen, velse, dst, 'zero'())]
+      | move_macro -> {
+           match src with
+              'reg'(x) -> ['mov'(src, dst)]
+            | else -> ['ldimmed'(dst, src)] // TODO!!!: check if it fits, expand if needed
+        }
+      | ret_macro -> 
+           ['aluop'('add', v, 'reg'('R0'), 'reg'('R2'), 'zero'());@retcode]
+      | vret_macro -> retcode
+      | abi_preamble_macro ->
+           ['mov'('reg'('SP'), 'reg'('FP'));
+            @if(framesize>0)
+              ['aluop'('add', 'reg'('FP'), 'reg'('R0'), 'reg'('SP'), 'const'(0 - framesize))];
+            @map s in saveregs count i do
+               'storei'('reg'('SP'), 'reg'(s), 'const'(-1))]
+      // TODO: abi_savereg_macro, abi_restorereg_macro
+      | abi_savereg_macro -> {
+            regs = ohashget(liveht, id);
+            map r in regs do  {
+               'storei'('reg'('SP'), 'reg'(r), 'const'(-1))}}
+      | abi_restorereg_macro -> {
+            regs = ohashget(liveht, id);
+            [
+             @map r in reverse(regs) count i do 
+                'load'('reg'(r), 'reg'('SP'), 'const'(i + 1));
+             @if(regs) ['aluop'('add', 'reg'('SP'), 'reg'('R0'), 'reg'('SP'), 'const'(length(regs)))]
+            ]}
+      | else -> [node]
+     }}}}
+
+\subsection{Hazard management}
+
+Hazards depend on the pipeline configuration. For the default Xilinx
+configuration, the rules are following:
+
+\begin{itemize}
+\item Two delay slots after \verb|jmpc|
+\item One delay slot for a complex register dependency. This includes: load, add
+  with a non--zero immediate.
+\item Two delay slots between aliased store and load (to be confirmed).
+\end{itemize}
+
+This is also an opportunity to do some last minute peephole optimisations (e.g.,
+jump immediately followed by a destination label is redundant).
+
+Before we go any further, it's a right moment to flatten the basic blocks, and a
+chance to reorder them in a way that can be beneficial for the peephole
+optimiser. For this, we'll look at the last instructions (no more terminal
+instructions here anyway), and if they're unconditional jumps, we'll put the
+destination basic block right next to them. If there are more than one candidate
+reorderings, the one which is deeper in a loop nesting is favoured.
+
+\pfcode{include "./asm.hl"}
+
+\pfcode{
+function c2_flatten(src) {
+  visit:ir2isa (irtoplevel: src) {
+     deep irtoplevel {
+       %function -> { 'globlabel'(name):'i'('jmpr'('rel'('entry'))):body }
+     | else -> ccerror('IMPOSSIBLE'())};
+     deep c2val {
+       reg -> nm
+     | const -> node
+     | zero -> node
+     | vreg -> ccerror('IMPOSSIBLE'())};
+     deep c2instr {
+       label -> node
+     | else -> 'i'(node)};
+     deep ircode: {
+        // TODO: re-or-der
+        map append b in bs do b};
+     deep irbblock {
+        bblock -> ss}}}}
+
+
+And a final touch - rename the labels in order to avoid interference.
+
+\pfcode{
+function c2_fix_labels(src) {
+  labels = mkhash();
+  iter s in src do {match s with 'label'(l) -> ohashput(labels, l, gensym())};
+  map s in src do
+     visit:c2asm(entry: s) {
+        deep entry {
+          label -> mk:node(lbl = ohashget(labels, lbl))
+        | else -> node};
+        deep expr {
+          label -> aif(chk = ohashget(labels, id)) mk:node(id=chk) else node
+        | rel -> aif(chk = ohashget(labels, id)) mk:node(id=chk) else node
+        | else -> node}}}}
+
+We will infer dependency rules from each instruction, and then reorder the
+instructions or insert nops depending on these rules.
+
+\pfcode{
+function c2_hazard_rules(i) collector(add, get) {
+  iszero(e) =
+    visit:c2asm (expr: e) {
+      once expr {
+       zero -> true
+     | const -> n==0
+     | else -> 0}};
+  visit:c2asm(entry: i) {
+    deep reg : fun(tp) {
+       if (node === 'R0' || node === 'R1') []
+       else match tp with
+               [x;y] -> add([x;y;node])
+             | x -> add([x;node])};
+    deep instr {
+       jmpc -> {add('delay-slots-jump'(2)); a('depends'); add('jump'())}
+     | jmpci -> {add('delay-slots-jump'(2)); a('depends'); add('jump'());
+                 dst('depends')}
+     | aluop -> {
+          // If it's an addition and immediate is non-zero, delay the result by 1 slot
+          // TODO: but, if the second arg is R0, we do not need a delay slot
+          a('depends'); b('depends');
+          dst(if((op === 'add' && not(iszero(immed))) ||
+                 (op === 'ext')) 'produce1'(1) else 'produce')}
+     | mov -> { dst('produce'); src('depends')}
+     | touch -> {dst('depends');dst('produce');dst('touch')}
+     | ret -> {add('depends'('SP')); add('jump'())}
+     | jmp -> add('jump'())
+     | call -> {add('depends'('SP')); add('jump'())}
+     | jmpr -> add('jump'())
+     | ldimmed -> dst('produce')
+     | ext -> {a('depends'); b('depends'); dst('produce'); add('ext'())}
+     | ext2 -> add('ext2'())
+     | load -> {dst('produce1'(2)); src('depends'); add('load'())}
+     | store -> {dst('depends'); v('depends'); add('store'(1))}
+     | storei -> {dst('depends'); dst('produce'); v('depends'); add('store'(1))}
+     | else -> []}};
+  return get()}}
+
+TODO!!! Now we could have used the rules above to do the proper instruction
+scheduling, but for a moment we'll just settle on the most trivial thing, just
+sprinkling some nops here and there without any instruction reordering.
+
+
+\pfcode{
+function c2_schedule(src) {
+   prevr = mkref([]);
+   delayslots(lst) = {
+      slots = mkref([]);
+      (iter l in lst do match l with 'delay-slots-jump'(n) -> slots := n);
+      return ^slots};
+   isjump(lst) = filter l in lst as (match l with 'jump'() -> true | else -> []);
+   dependson(l1, l2) = {
+      prod = mkhash();
+      store = mkref([]);
+      iter l in l2 do {
+        match l with
+           'produce'(x) -> ohashput(prod, x, 0)
+         | 'store'(@_) -> store := true
+         | 'produce1'(n, x) -> ohashput(prod, x, n)};
+      max = mkref([]);
+      iter l in l1 do {
+        match l with
+           'load'(@_) -> if (^store) if(not(^max) || (^max < 1)) max := 1
+        |  'depends'(r) -> aif(chk = ohashget(prod, r)) if(not(^max) || (^max < chk)) max := chk};
+      return ^max};
+   ret = map append s in src do {
+          nw = c2_hazard_rules(s);
+          prev = ^prevr; prevr := nw;
+          slots = delayslots(prev);
+          depslots = dependson(nw, prev);
+          if (slots && (depslots || isjump(prev))) {
+            (map x in [0..slots] do 'i'('nop'())) :: [s]
+          } else if (depslots) {
+            (map x in [0..depslots] do 'i'('nop'())) :: [s]
+          } else [s]};
+   slots = delayslots(^prevr);
+   nxt = (if (slots) {map x in [0..slots] do 'i'('nop'())} else []);
+   return ret :: nxt}}
+
+\subsection{Assembly codegen}
+
+By now all functions are fully lowered, but we still have to link them together,
+along with the static data. In C2, entry point is 0 (yes, yes, it's a bad design
+decision, but whatever, C2 is expected to be often used with just tiny code
+ROMs, so every word counts).
+
+\subsection{Driver}
+
+\pfcode{
+function c2_driver(src) {
+   t1 = c2_gep_elaboration(src);
+   t2 = c2_out_of_ssa(t1);
+   t3 = c2_lower_ir(t2);
+   t3x = c2_lower_args(t3);
+   t4 = c2_legalise_immediates(t3x);
+   t5 = c2_regalloc(t4);
+   t6 = c2_spills(t5);
+   t7 = c2_lower_macros(t6);
+   t8 = c2_fix_labels(c2_flatten(t7));
+   t9 = c2_schedule(t8);
+   return t9;
+}}
+
+\pfcode{
+function c2_inline_pred(f) {
+  is_inline(l) = find(fun(k) match k with 'inline'() -> true | else -> [], l);
+  if (f) 
+    visit:ir2(irtoplevel:f) {
+      deep irtoplevel {
+        %function -> if(body) is_inline(annotations) else []
+      | else -> []}}}}
+
+\pfcode{
+function c2_optimise_again(mdl) {
+   env = ll_module_types(mdl);
+   visit:ir2(irmodule: mdl) {
+      deep irtoplevel {
+          %function -> if (body) {
+             if (deref( %llvm-optimise )) {
+                   <g2tp:g2> = ll_genssa_opt(env, node);
+                    g2
+             } else node} else node
+        | else -> node}}}}
+
+\phcode{include "./verilog.hl"}
+
+\pfcode{
+function c2_driver_mdl(mdl, fnm)
+collector(vladd, vlget) {
+   envtypes = ll_propagate_types(mdl);
+   mdl_pre = hoist_inlined_verilog(vladd, mdl, ['exec_arg2';'exec_arg1'], fun(iid, icrc) iid);
+  <[env;types]> = envtypes;
+   mdl1 = c2_legalise_terms(c2_legalise_binops(types, mdl_pre));
+   mdl1x =  ir2_inline(c2_inline_pred, mdl1);
+   mdl1y =  ir2_inline(c2_inline_pred, mdl1x);
+   mdl1z =  ir2_inline(c2_inline_pred, mdl1y);
+   mdl1zz = ir2_bodypass(mdl1z, il2ssa_fullssa);
+   mdl1f =  c2_optimise_again(mdl1zz);
+   envtypes = ll_propagate_types(mdl1f);
+  <[env;types]> = envtypes;
+   mdl2 = ll_annotate_geps(envtypes, mdl1f);
+   asm0 = map append t in mdl2 do 
+     visit:ir2 (irtoplevel: t) {
+        once irtoplevel {
+          %function -> if (body) c2_driver(node) else []
+        | comment -> []
+        | else -> ccerror('UNSUPPORTED'(node))}};
+   asm = 'label'('__start'):
+         'i'('ldimmed'('SP', 'const'(^c2_ram_end))):
+         'i'('jmpr'('rel'('bootentry'))):asm0;
+    <ht:c0> = c2labels(0, asm);
+      #(call-with-output-file (S<< fnm ".dbg")
+          =pf: fun(fo) {
+             iter c in c0 do {
+                visit:c2asm (entry: c) {once entry {
+                   i -> fprintln(fo, %S<<(car(p), " \t  ", i))
+                 | else -> fprintln(fo, %S<<(node))}}}});
+       s1 = c2exprs(ht, c2macros(c0));
+   
+       out = map append s in s1 do {
+          c2encode_entry(s)};
+       hex(n) =
+        .net(n): {
+          leave ((Int32)n).ToString("x");
+       };
+       #(call-with-output-file (S<< fnm ".hex") (fun (fo)
+           =pf: iter o in out do fprintln(fo,hex(o))));
+       vlg = vlget();
+       if (vlg) process_inlined_verilog_c2(fnm, vlg);
+    }}
+
+%%%%%

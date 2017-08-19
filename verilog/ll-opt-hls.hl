@@ -1,0 +1,153 @@
+% literate:
+
+\phcode{litinclude "../clike/backend/ssa-fold-ast.hl"}
+
+\section{HLS--specific optimisations}
+
+This select extraction pass is different from the default one - it is supposed to compress any merging paths into
+selects as long as branches do not contain side effects (i.e., no memory access). There is no performance penalty
+in HLS backend for merging unrelated paths together since they're executed in parallel.
+
+\pfcode{
+%"Try to apply suspected phi to select rewrites, merging all the pure paths together"
+function hls_try_phi_rewrites(env, domtree, src, rewrites, chgp)
+{
+   // 1. Cache the rewrite commands
+   rs = mkhash();
+   iter try_to_rewrite(bb, d, neg, cnd, pa, pb) in rewrites do {
+      ohashput(rs, bb, [d;neg;cnd;pa;pb]);
+   };
+   // 2. Cache the definition origins
+   defs = mkhash(); defsh = mkhash();
+   visit:genssa2(top: src) {
+      deep bblock { b -> iter o in ops do o(name) };
+      deep oppair:
+        fun(bb) {
+          ohashput(defs, name, bb);
+          ohashput(defsh, name, op)}};
+
+   getarg(a) = visit:genssa2(phiarg:a) {
+      deep phiarg { a -> v }};
+
+   getsrc(a) = visit:genssa2(phiarg:a) {
+      deep phiarg { a -> src }};
+
+
+   termrewrites = mkhash();
+   rewriteterm(f, t) = ohashput(termrewrites, f, 'br'(t));
+      
+   pass1 =  visit:genssa2(top: src) {
+      deep bblock { b -> mk:node(ops = map o in ops do o(name))};
+      deep oppair: fun(bb) mk:node(op=op(bb, name));
+      deep iop(bb, dst) {
+          phi ->
+            {match ohashget(rs, bb) with
+                [d;nneg;cnd;pa;pb] -> {
+                    <[a1;a2]> = args;
+                     a = getsrc(a1); b = getsrc(a2);
+                     // We can always rewrite it.
+                     chgp := true;
+
+                     if (pa === bb) {
+                        rewriteterm(d, pb);
+                        rewriteterm(b, bb);
+                     } else if (pb === bb) {
+                        rewriteterm(d, pa);
+                        rewriteterm(a, bb);
+                     } else {
+                        rewriteterm(d, pa);
+                        rewriteterm(a, pb);
+                        rewriteterm(b, bb)};
+                     
+                     if (nneg)
+                        return 'select'(cnd, getarg(a1), getarg(a2))
+                     else
+                        return 'select'(cnd, getarg(a2), getarg(a1))
+                   }
+             | else -> node}
+       |  else -> node
+      }};
+   // Merge pass: replace a diamond D -> ( Pa | Pb ) -> C with D -> Pa -> Pb -> C
+   // i.e., replace D terminal with br(Pa) and replace A terminal with br(Pb).
+   pass2 = visit:genssa2(top: pass1) {
+      once bblock { b -> aif(ntrm = ohashget(termrewrites, name)) mk:node(t = ntrm) else node }};
+   return pass2;}}
+
+\pfcode{
+function hls_path_pure(env, domtree, cfg, defs, pth) {
+  //TODO:
+  return true
+}}
+
+\pfcode{
+function hls_detect_select_pattern(env, domtree, cfg, defs, bbs, a, b, c) {
+   // a, b - source bbs
+   // c - phi bb
+   d = genssa2_find_nearest_dominator(domtree, [a;b;c]);
+   // d - nearest common dominator for all three
+   if (d) {
+     pths = genssa2_find_paths(domtree, cfg, d, a, b, c);
+     match pths with
+       [de;pa; pb] -> {
+         aif(cnd = genssa2_get_condition(ohashget(bbs, d))) {
+           if (hls_path_pure(env, domtree, cfg, defs, pa)
+               && hls_path_pure(env, domtree, cfg, defs, pb)) {
+             dexits = ohashget(cfg, d);
+            <[exa;exb]> = if (memq(car(dexits), pa)) dexits else reverse(dexits);
+             return [d; de; cnd; exa; exb]
+           } else []
+         } else []}
+     | else -> [] // disqualified
+   }}}
+
+\pfcode{
+%"An interface function, detect and apply phi to select rewrites"
+function hls_detect_selects(env, src, chgp) {
+   // 0. Build a CFG, cache defs and basic blocks
+   cfg = mkhash(); bbs = mkhash();
+   visit:genssa2(top: src) {
+      once bblock {
+         b -> {ohashput(bbs, name, node);
+               ohashput(cfg, name, genssa2_get_exits(node))}}};
+
+   defs = genssa2_cache_defs(src);
+   
+   // 1. Buid domtree
+   domtree = graph_dominators(cfg, 'entry');
+   
+   // 2. For each potentially perspective phi node,
+   //    check for select pattern presence
+   candidates = mkhash();
+   visit:genssa2(top: src) {
+      deep bblock {
+         b -> iter o in ops do o(name)};
+      deep oppair: fun(bb) op(bb);
+      deep phiarg { a -> src };
+      deep iop(bb) {
+         phi ->
+            if(length(args)==2)
+              if (not(ohashget(candidates, bb))) {
+                 ohashput(candidates, bb, args)}
+       | else -> []}};
+   clist = hashmap(fun(k,v) k:v, candidates);
+
+   collector(add, get) {
+     iter [c;a;b] in clist do {
+        chk = hls_detect_select_pattern(env, domtree, cfg, defs,
+                                        bbs, a, b, c);
+        if (chk) {
+          <[d;neg;cnd;pa;pb]> = chk;
+           add('try_to_rewrite'(c, d, neg, cnd, pa, pb))
+        }};
+     rewrites = get();
+     if (rewrites)
+         return hls_try_phi_rewrites(env, domtree, src, rewrites, chgp)
+     else return src}}}
+
+
+\pfcode{
+function hls_select_passes(modenv, src, chgp) {
+ return  hls_detect_selects(modenv, src, chgp)
+ }}
+
+%%%%

@@ -53,6 +53,7 @@ representing it in between parsing and inline processing.
 \pfcode{
 ast vlinline {
   itop = define(moduleItem:mi)
+       | reset(*vlgstatement:ss)
        | instance(ident:nm, *iportbind:ports)
        | usemodule(string:path)
        | execop(icvargs:a, *vlgstatement:ss,
@@ -89,6 +90,7 @@ syntax of pfclike in clexpr, inner (verilog):
     ' inline verilog [clvinline]:i '
 + {
        clvinline := { define "{" [moduleItem]:mi "}"  => define(mi)}
+                 /  { reset "{" eslist<[statement]>:ss "}" => reset(ss) }
                  /  { instance [moduleident]:nm "("
                            ecslist<[cvportbind],",">:ports ")" => instance(nm, ports) }
                  /  { usemodule [string]:s => usemodule(s) }
@@ -214,7 +216,9 @@ into {\tt vlhoisted} commands. Source module is rewritten, leaving intrinsic
 calls or nops in place of the inline expressions.
 
 \pfcode{
-function hoist_inlined_verilog(out, mdl) {
+function hoist_argfun_default(iid, icrc) { iid * 65536 + icrc }
+
+function hoist_inlined_verilog(out, mdl, argwires, argfun) {
   ctx = mkhash(); vctx = mkhash();
   iids = mkref(0);
   newiid() = {
@@ -228,22 +232,32 @@ function hoist_inlined_verilog(out, mdl) {
   build(v) = fun(args) { v };
   build_noreturn_wait(kind, iid, icrc) = fun(args) {
      fnm = match args with
-              [a;b] -> '_custom2_0'
-            | [a] -> '_custom1_0'
-            | [] -> '_custom0_0';
-     arg = iid * 65536 + icrc;
+              [a;b] -> '_custom2_0b'
+            | [a] -> '_custom1_0b'
+            | [] -> '_custom0_0b';
+     arg = argfun(iid, icrc);
      if (kind==='noreturn')
         out('inst_noreturn'(iid, icrc));
      return 'call'(fnm, 'integer'(arg, 'i32'), @args)
   };
-  build_noreturn(iid, icrc) = build_noreturn_wait('noreturn',iid,icrc);
+  build_noreturn_nowait(kind, iid, icrc) = fun(args) {
+     fnm = match args with
+              [a;b] -> '_custom2_0'
+            | [a] -> '_custom1_0'
+            | [] -> '_custom0_0';
+     arg = argfun(iid, icrc);
+     if (kind==='noreturn')
+        out('inst_noreturn'(iid, icrc));
+     return 'call'(fnm, 'integer'(arg, 'i32'), @args)
+  };
+  build_noreturn(iid, icrc) = build_noreturn_nowait('noreturn',iid,icrc);
   build_wait(iid, icrc) = build_noreturn_wait('wait',iid,icrc);
   build_return(iid, icrc) = fun(args) {
      fnm = match args with
               [a;b] -> '_custom2_1'
             | [a] -> '_custom1_1'
             | [] -> '_custom0_1';
-     arg = iid * 65536 + icrc;
+     arg = argfun(iid, icrc);
      return 'call'(fnm, 'integer'(arg, 'i32'), @args)
   };
   add_netdef(d) = out('netdef'(d));
@@ -268,7 +282,7 @@ function hoist_inlined_verilog(out, mdl) {
 
   make_args(a) = {
     as = mkhash();
-    ss = mkref(['stack_data_a';'stack_data_b']);
+    ss = mkref(argwires);
     getnext() = {
       if (not(^ss)) ccerror('VERILOG-TOO-MANY-ARGUMENTS'(a));
       c = car(^ss);
@@ -364,6 +378,7 @@ function hoist_inlined_verilog(out, mdl) {
   hoist(args, code) = {
     schk = %S<<(code); // code is it's own hash
     chk = ohashget(ctx, schk);
+    writeline('HOIST'(args, code));
     if (chk) chk(args) else {
       fn = visit:vlinline(itop: code) {
         deep itop {
@@ -371,6 +386,7 @@ function hoist_inlined_verilog(out, mdl) {
              add_netdef(mi);
              build(%__nop )
            }
+         | reset -> { iter s in ss do out('reset'(s)); build(%__nop ) }
          | instance -> {
              add_instance(nm, ports);
              build(%__nop )

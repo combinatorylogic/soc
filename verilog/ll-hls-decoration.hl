@@ -1,0 +1,78 @@
+%literate:
+
+\subsection{Closer to the Verilog target}
+
+The next step is to decorate our IR with some boilerplate:
+generate REQ and ACK signals, replace terminal instructions with if and goto statements, etc.
+
+\pfcode{
+function ll_to_hls_lower_hls1(top) {
+   bit = with target(hls2) {mk:type:v(1)};
+   zero = with target(hls2) {mk:value:const(0, bit)};
+   one = with target(hls2) {mk:value:const(1, bit)};
+   dofsm(f, ackp) =
+      {
+         // 1. Collect registers to fill a reset statement.
+         fsmregs = collector(addreg, getregs) {
+            collectregs() =
+               visit:hls1 /rec/ (modentry: f) {
+                  once instr {
+                     a -> addreg(reg) | else -> []}};
+            collectregs();
+            return unifiq(getregs())};
+         // 2. Prepare a reset statement and an idle stage:
+         // TODO: only set ACK for the 'default' FSM, the others
+         //       should not drive it.
+         reset = with target(hls2) {
+          mk:stmt:begin(
+            [@if(ackp) [mk:stmt:set('ACK', mk:v(zero))];
+             @map r in fsmregs do
+               mk:stmt:set(r, mk:v(zero))])};
+         makeidle(start) =
+            with target(hls2) {
+               mk:fsmstage:stage('IDLE', [
+                                          mk:set('ACK', mk:v(zero));
+                                          mk:if(mk:op('EQ',[mk:reg('REQ');one], mk:v(32)), mk:stmt:goto(start),
+                                                mk:stmt:goto('IDLE'))])};
+         // 3. Rewrite an FSM
+         visit:hls1 /rec, dst hls2/ (modentry: f) {
+            deep modentry {
+              fsm -> mk:modentry:xfsm(nm, 'IDLE', reset, makeidle(start): ss)
+            | pipeline -> mk:modentry:xpipeline(nm, reset, mk:stmt:begin(ss=map append s in ss do s))
+            | else -> ccerror('WTF'())};
+            deep pipestage {
+              stage -> ss}; // TODO: stalls
+            deep fsmstage {
+              stage -> mk:fsmstage:stage(name, ss :: next)};
+            deep instr {
+              a -> mk:stmt:set(reg, op)
+            | z -> op};
+            deep iop {
+              store -> mk:stmt:store(mem, mk:v(offset), mk:v(v))
+            | load_start -> mk:stmt:load_start(mem, reg, mk:v(offset))
+            | op_start -> mk:stmt:op_start(inst = inst, fn = fn, cycles = cycles,
+                                           args = map a in args do mk:expr:v(a), tp = tp)
+            | op -> mk:expr:op(fn, args, rettype)
+            | convop -> mk:expr:convop(fn, arg, t)
+            | select -> mk:expr:select(cnd, tr, fl)
+            | nphi -> ccerror('IMPOSSIBLE'())
+            | v -> mk:expr:v(v)};
+            deep switchdst {
+              d -> mk:case:d(v, mk:stmt:goto(dst))};
+            deep exit {
+              br -> [mk:stmt:goto(dst)]
+            | brc -> [mk:stmt:if(mk:v(c), mk:stmt:goto(tr), mk:stmt:goto(fl))]
+            | switch -> [mk:stmt:switch(mk:v(c), mk:stmt:goto(els), dsts)]
+            | ret -> [mk:stmt:set('ACK', mk:v(one)); mk:stmt:goto('IDLE')]}}};
+   // Process FSMs
+   visit:hls1 /rec, dst hls2/ (top: top) {
+      deep top {
+         module -> mk:top:module(args = args :: [mk:modarg:ain('REQ', bit);
+                                                 mk:modarg:aoutreg('ACK', bit)])};
+      once modentry {
+         fsm -> dofsm(node(), nm === 'default')
+       | pipeline -> dofsm(node(), [])
+       | deep -> { else -> node() }}}}}
+
+
+%%%%%%%

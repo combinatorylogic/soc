@@ -13,7 +13,9 @@ install:
 script: 
   - git submodule update --init
   - make clikecc.exe
+  - make prep
   - make hwtests
   - make hdltests
   - make longhdltests
-
+  - make icetest
+  - make c2

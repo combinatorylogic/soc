@@ -48,8 +48,9 @@
        (parameter . <*parameterAssignment:as>)
    ))
    (range  (|
-       (r <constantExpression:l> <constantExpression:r>)
-   ))
+            (r <constantExpression:l> <constantExpression:r>)
+            (typeof <expression:e>)
+            ))
    (registerVariable  (|
        (reg <nameOfRegister:nm>)
        (mem <nameOfMemory:nm> <constantExpression:l> <constantExpression:r>)
@@ -73,6 +74,7 @@
    (rangeOrType  (|
        (real)
        (integer)
+       (r <range:r>)
    ))
    (tfDeclaration  (|
        (real . <*nameOfVariable:rs>)

@@ -1,0 +1,243 @@
+%literate:
+
+\subsection{Lifting wire assignments}
+
+We've marked registers and wires previously. Now we can lift the assignments explicitly and
+rewrite the FSM or pipeline stages with a remaining behavioural logic.
+
+\pfcode{
+%"hls0:top -> hls1:top; Make our FSMs or pipelines explicit"
+function ll_to_hls_explicit_fsms(aenv, top) {
+   // 1. Previous steps could have splitted FSMs into multiple parallel
+   //    flows, here we have to collect BBs from the different FSMs.
+   fsms = mkhash(); pipelines = mkhash(); specials = mkhash();
+   collectfsms() =
+     visit:hls0 /rec/ (top: top) {
+       deep bblock {
+          bb -> tp(thisnodesrc(), name)};
+       deep bbtype(bb, bbname) {
+          fsm -> ohashput(fsms, id, bb:ohashget(fsms, id))
+        | pipeline -> ohashput(pipelines, id, bb:ohashget(pipelines, id))
+        | else -> ohashput(specials, bbname, bb:ohashget(specials, bbname))}};
+   collectfsms();
+   // 2. Lift all the declarations. N.b. that this is not an SSA any more after
+   //    the register allocation, and one register can be assigned more than once.
+   decls = collector(adddecl, getdecls) {
+     regs = mkhash();
+     liftdecl(k, id, rtp) =
+       with target(hls1) {
+          if(k==='reg')
+             adddecl(mk:modentry:register(rtp, id))
+          else adddecl(mk:modentry:wire(rtp, id));
+          if(k==='reg') ohashput(regs, id, id)};
+     collectdecls() =
+        visit:hls0 /rec/ (top: top) {
+           deep instr {
+              i -> tp(dst, otp)};
+           deep itp(id, rtp) {
+              reg -> if (not(ohashget(regs, id))) liftdecl('reg', id, rtp)
+            | wire -> liftdecl('wire', id, rtp)}};
+     collectdecls();
+     return getdecls()};
+   // 3. Generate FSM stages, leaving only the register transfers and
+   //    memory stores inside. The rest is lifted as combinational logic.
+   //    N.b.: phis are lifted too, unless they're assigned to registers with
+   //    no immediate use, and an fsm+stage info is attached to make it easier to
+   //    replace them with muxes later.
+   collector(addfsm, getfsms) {
+   collector(addpipe, getpipes) {
+   collector(addass, getasss) {
+   collector(addspec, getspecials) {
+     makeexpr(op, fsm, stage, wire) =
+       visit:hls0 /rec, dst hls1/ (iop: op) {
+          deep iop {
+           op -> mk:expr:op(fn, args, rettype)
+         | convop -> mk:expr:convop(fn, arg, t)
+         | select -> mk:expr:select(cnd, tr, fl)
+         | phi    -> mk:expr:nphi(fsm, stage, args)
+         | v      -> mk:expr:v(v)
+         | load_commit -> mk:expr:load_commit(mem, reg)
+         | op_commit -> mk:expr:op_commit(inst)
+         | else   -> ccerror('CANNOT_BE_WIRE'(wire))
+         }};
+     makeassign(fsm, stage, nd) = 
+       visit:hls0 /rec, dst hls1/ (instr: nd) {
+         deep instr {
+           i -> addass(mk:modentry:assign(dst, mk:e(op(dst))))};
+         once iop { else -> fun(wire) makeexpr(thisnodesrc(), fsm, stage, wire)}};
+     makeinstr(fsm, stage, nd) =
+       visit:hls0 /rec, dst hls1/ (instr: nd) {
+          deep iop {
+             phi -> mk:iop:nphi(fsm, stage, args)
+           | else -> node()};
+          deep instr {
+             i -> mk:instr:a(dst, otp, op)}};
+     makezinstr(nd) =
+       visit:hls0 /rec, dst hls1/ (instr: nd) {
+          deep instr {
+             i -> mk:instr:z(op)}};
+     rewritebb(fsmname, bb) = 
+       visit:hls0 /rec, dst hls1/ (bblock: bb) {
+         deep bblock {
+           bb -> mk:fsmstage:stage(name, map append b in bs do b(name), next)};
+         deep parblock(stagename) {
+           pb -> map append s in ss do s(stagename)};
+         deep instr(stagename) {
+           i -> tp(stagename, thisnodesrc())};
+         deep itp(stagename, nd) {
+           reg -> [makeinstr(fsmname, stagename, nd)]
+         | none -> [makezinstr(nd)]
+         | else -> {makeassign(fsmname, stagename, nd);[]}}};
+     rewritebbpipe(ppname, bb) = 
+       visit:hls0 /rec, dst hls1/ (bblock: bb) {
+         deep bblock {
+           bb -> mk:pipestage:stage(name, map append b in bs do b(name), mk:v(mk:const(0, mk:v(1))))};
+         deep parblock(stagename) {
+           pb -> map append s in ss do s(stagename)};
+         deep instr(stagename) {
+           i -> tp(stagename, thisnodesrc())};
+         deep itp(stagename, nd) {
+           reg -> [makeinstr(ppname, stagename, nd)]
+         | none -> [makezinstr(nd)]
+         | else -> {makeassign(ppname, stagename, nd);[]}}};
+     rewritespec(bb) =
+        visit:hls0 /rec, dst hls1/ (bblock: bb) {
+           deep bblock {
+             bb -> mk:modentry:special(tp)};
+           deep instr {
+             i -> tp(thisnodesrc())};
+           deep itp(nd) {
+             reg -> [makeinstr('loopcontrol', 'reissue', nd)]
+           | none -> [makezinstr(nd)]
+           | else -> {makeassign('loopcontrol', 'reissue', nd);[]}};
+           deep bbtype {
+             enqueue_once -> mk:specentry:enqueue_once()
+           | enqueue_loop -> 
+                mk:specentry:enqueue_loop(
+                         stepinstrs = map append i in stepinstrs do i,
+                         final = map append f in final do f)
+           | else -> ccerror('WRONG-TYPE'())}};
+     orderbbs(lst) = {
+        // TODO:
+        reverse(lst)
+     };
+     hashiter(fun(fsmnm, lst) {
+                 ss = map bb in reverse(lst) do
+                        rewritebb(fsmnm, bb);
+                 with target(hls1) {
+                   addfsm(mk:modentry:fsm(fsmnm, 'entry', ss))
+                 }}, fsms);
+     hashiter(fun(ppnm, lst) {
+                 lst1 = orderbbs(lst);
+                 ss = map bb in lst1 do
+                        rewritebbpipe(ppnm, bb);
+                 with target(hls1) {
+                   addpipe(mk:modentry:pipeline(ppnm, ss))
+                 }}, pipelines);
+
+     hashiter(fun(spnm, lst) {
+                 iter l in reverse(lst) do addspec(rewritespec(l))
+              }, specials);
+
+     return visit:hls0 /rec, dst hls1/ (top: top) {
+       once top {
+         module -> mk:top:module(es = decls :: getasss() :: getfsms() :: getpipes() :: getspecials())}}}}}}}}
+
+
+\subsection{Removing phi nodes}
+
+The previous step lifted $\varphi$-nodes into wire assignments, marking them with their corresponding FSM
+stages. Now we can introduce stage registers and replace the $\varphi$-nodes with selects.
+
+\pfcode{
+%"hls1:top -> hls1:top; replace phis with selects"
+function ll_to_hls_remove_phis(top) {
+  // 1. Collect state transitions that are leading to phis
+  fsms = mkhash();
+  getfsm(id) =
+    aif(arcs = ohashget(fsms, id)) arcs
+    else {
+       arcs = mkhash();
+       ohashput(fsms, id, arcs);
+       return arcs};
+  collectphis() = {
+     addphi(fsm, stage, args) = {
+        arcs = getfsm(fsm);
+        iter a in args count n do 
+           ohashput(arcs, a, [stage; n]:ohashget(arcs, a))};
+     visit:hls1 /rec/ (top: top) {
+        deep iop { nphi -> addphi(fsm, stage, args) | else -> []};
+        deep expr { nphi -> addphi(fsm, stage, args) | else -> []};
+        deep phiarg { p -> label }}};
+  collectphis();
+
+  // 1x. Collect exits
+  exits = mkhash();
+  collectexits() =
+     visit:hls1 /rec/ (top: top) {
+        deep modentry {
+           fsm -> iter ss do ss(nm)
+         | else -> []};
+        deep fsmstage(fsmname) {
+           stage -> next(fsmname, name)};
+        deep exit(fsm, stage) {
+           else -> ohashput(exits, %Sm<<(fsm, "--", stage), node())}};
+  collectexits();
+
+  // 2. Create a branch id register for each FSM, with enough bits to
+  //    represent the largest phi in it.
+  fsmregs = mkhash();
+  hashiter(fun(k, v) ohashput(fsmregs, k, gensym()), fsms);
+
+  // 3. Inject register assignments to the originating sstates and
+  //    replace phi nodes with selects
+  getfsmreg(fsm) = ohashget(fsmregs, fsm);
+  etype = with target (hls1) { mk:type:v(0) }; // TODO
+  injectexits(fsm, stage, regname, phiarcs) = with target (hls1) {
+     next = ohashget(exits, %Sm<<(fsm, "--", stage));
+     nxts = mkhash(); getn(l) = aif(chk = ohashget(nxts, l)) chk else 0;
+     getnc(l) = with target(hls1) { mk:value:const(getn(l), etype)};
+     iter [f;n] in phiarcs do ohashput(nxts, f, n);
+     [mk:instr:a(regname, etype,
+       visit:hls1 /rec/ (exit: next) {
+          deep exit {
+             br -> mk:iop:v(getnc(dst))
+           | brc -> mk:iop:select(c, getnc(tr), getnc(fl))
+           | switch -> mk:iop:op('nselect', [c;@map d in dsts do getnc(d)], mk:v(32))
+           | else -> ccerror('IMPOSSIBLE'())}})]};
+  inject(fsm, stage) = {
+     arcs = getfsm(fsm);
+     phiarcs = ohashget(arcs, stage);
+     if (phiarcs) {
+       regname = getfsmreg(fsm);
+       return injectexits(fsm, stage, regname, phiarcs);
+     } else []};
+  expandphi(fsm, stage, args) =
+    with target(hls1){
+       regname = getfsmreg(fsm);
+       do loop(a = args, cnt = 0) {
+         match a with
+            [hd] -> hd
+          | hd:tl -> mk:expr:select(mk:e(mk:op('EQ', [mk:reg(regname); mk:const(cnt, mk:v(0))], mk:v(32))),
+                                    hd, loop(tl, cnt+1))}};
+  return visit:hls1 /rec/ (top: top) {
+     deep top {
+        module -> {
+          // TODO: infer origin register widths
+          newregs = hashmap(fun(k, nm) {mk:modentry:register(mk:v(32),nm)}, fsmregs);
+          mk:node(es = newregs :: es)}};
+     deep modentry {
+        fsm -> mk:node(ss = map s in ss do s(nm))
+      | else -> node()};
+     deep fsmstage(fsmname) {
+        stage -> { inj = inject(fsmname, name); mk:node(ss = ss :: inj) }};
+     deep expr {
+        nphi -> expandphi(fsm, stage, args)
+      | else -> node()};
+     deep phiarg { p -> v };
+     deep iop {
+        nphi -> mk:v(mk:e(expandphi(fsm, stage, args)))
+      | else -> node()}}}}
+
+
+%%%%%%%

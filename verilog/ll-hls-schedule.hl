@@ -1,0 +1,233 @@
+%literate:
+
+\subsection{Extracting the dependencies in a basic block}
+
+We'll prepare a set of constraint equations out of the internal dependencies of a single basic block.
+
+Equations are following:
+
+\begin{itemize}
+\item \verb|after(A, B, N)| - A is in exactly N cycles after B
+\item \verb|depends(A, B)| - A depends on B and therefore must be in the same or later cycle
+\item \verb|ordered(A, B)| - A must be in any cycle after B
+\item \verb|exclusive(A, B)| - A and B cannot be in the same clock cycle
+\item \verb|entry(A)| - A must be in the first cycle of this basic block (e.g., it's a $\varphi$-node)
+\end{itemize}
+
+For example, all the memory operations on the same memory are ordered (later we'll add some support for the
+multiport memories, of course, but let's keep things simple for now). Maybe load commit operations should be
+allowed to share a stage with the consequent load start or write operations, but for now we'll keep everything
+strictly ordered.
+
+\pfcode{
+function ll_to_hls_mkmemorders(aenv, bb, eqadd) {
+   mems = mkhash();
+   addmem(mem, id) = {
+       chk = ohashget(mems, mem);
+       ohashput(mems, mem, [id] :: chk)};
+   visit:ir2split (irbblock: bb) {
+       deep irpair: e(nm);
+       deep irexpr(dst) {
+          mstore -> addmem(mem, dst)
+        | mload_start -> addmem(mem, dst)
+        | mload_commit -> addmem(mem, dst)
+        | else -> []}};
+   hashiter(fun(mem, rv) {
+       ids = reverse(rv);
+       if (ids)
+          foldl(fun(l,r) {
+              eqadd('ordered'(r, l));
+              r
+           }, car(ids), cdr(ids))
+    }, mems)}}
+
+Now, a very simple and stupid cost model which does not even take bit widths into account. It must be replaced at
+a first opportunity.
+
+\pfcode{
+function ll_to_hls_get_op_cost(fn, dst, args) {
+   // TODO: the real cost model, not this half assed shit
+   case (fn) {
+     'Shl' | 'AShr' | 'LShr' -> 1
+   | 'NOT' -> 1+(dst/3)
+   | 'EQ' | 'NE' | 'SGE' | 'SLT' -> 1 + (dst/2)
+   | else -> dst
+   }}}
+
+Costs are kept tamed by forcing the ordered breaks in dependency chains once they become too expensive.
+
+\pfcode{
+function ll_to_hls_costbreaks(aenv, bb, eqadd, varht) {
+  // Follow the cost chains and break them after a certain threshold
+  threshold = 65;
+  getvar(v) = visit:ir2split (irval: v) {
+     once irval {
+        var -> if (ohashget(varht, nm)) nm else []
+      | else -> []}};
+  max(a,b) = if(a>b) a else b;
+  costs = mkhash();
+  opcostg(id) = {
+     aif(chk = ohashget(costs, id)) chk
+     else 0
+  };
+  getcost(v) = visit:ir2split (irval: v) {
+     once irval {
+        var -> opcostg(nm)
+      | else -> 0}};
+  getvars(e) = collector(add, get) {
+     visit:ir2split (irexpr:e) {
+        once irval { var -> if (ohashget(varht, nm)) add(nm)
+                   | else -> []}};
+     return unifiq(get())};
+  visit:ir2split (irbblock: bb) {
+     deep irpair: e(nm);
+     deep irexpr(dst) {
+        binary -> {
+           dstwidth = 32; // TODO!
+           argswidths = []; // TODO!
+           opcost = ll_to_hls_get_op_cost(op, dstwidth, argswidths);
+           lcost = getcost(l); lvar = getvar(l);
+           rcost = getcost(r); rvar = getvar(r);
+           brk = mkref([]);
+           if (lvar && (lcost + opcost > threshold)) {
+              brk := true;
+              eqadd('ordered'(dst, lvar))};
+           if (rvar && (rcost + opcost > threshold)) {
+              brk := true;
+              eqadd('ordered'(dst, rvar))};
+           if (^brk) ohashput(costs, dst, opcost)
+           else ohashput(costs, dst, opcost + max(lcost, rcost))}
+      | op_commit -> []
+      | mload_commit -> []
+      | op_start -> []
+      | select -> {
+           vars = getvars(node);
+           vcosts = map v in vars do opcostg(v);
+           cost = foldl(max, 0, vcosts);
+           ohashput(costs, dst, cost + 32)
+        }
+      | else -> {
+           vars = getvars(node);
+           vcosts = map v in vars do opcostg(v);
+           cost = foldl(max, 0, vcosts);
+           ohashput(costs, dst, cost)
+        }}}}}
+
+The main equations inference entry:
+
+\pfcode{
+function ll_to_hls_bb_equations(aenv, bb)
+collector(eqadd, eqget) {
+    varht = mkhash();
+    adddeps(dst, nd) = collector(add, get) {
+       visit:ir2split (irexpr: nd) {
+          deep irval {
+             var -> if(ohashget(varht, nm)) add(nm)
+           | else -> []}};
+       deps = unifiq(get());
+       iter d in deps do
+          eqadd('depends'(dst, d))};
+    getvar(v) = visit:ir2split(irval: v) {
+       once irval {
+          var -> nm
+        | else -> ccerror('IMPOSSIBLE'(node))}};
+    visit:ir2split (irbblock:bb) {
+       deep irpair: {e(nm); ohashput(varht, nm, nm)};
+       deep irexpr(dst) {
+          op_commit -> {
+             eqadd('after'(dst, getvar(opstart), cycles));
+             adddeps(dst, node)}
+       |  phi -> {
+             eqadd('entry'(dst));
+             adddeps(dst, node)}
+       |  mload_commit -> {
+             eqadd('after'(dst, getvar(ldop), 1));
+             adddeps(dst, node)}
+       |  else -> adddeps(dst, node)}};
+    ll_to_hls_mkmemorders(aenv, bb, eqadd);
+    ll_to_hls_costbreaks(aenv, bb, eqadd, varht);
+    return eqget()}}
+
+Now we have a schedule, assigning all the registers to a basic block stage. Next step is to sort them
+all out into corresponding basic blocks.
+
+\pfcode{
+function ll_to_hls_multiply_bblocks(aenv, bb, sched, phirenames) {
+  resultbbs = mkhash();
+  schedht = mkhash();
+  bbname = visit:ir2split (irbblock:bb) {
+     once irbblock { bblock -> name }};
+  iter [nm;st] in sched do ohashput(schedht, nm, st);
+  mkbbnm(num) =
+     if(num==0) bbname else %Sm<<(bbname, "__v", num);
+  fillht1() =
+    visit:ir2split (irbblock: bb) {
+      deep irpair: {
+         num = aif(chk = ohashget(schedht, nm)) chk else 0;
+         bbnm = mkbbnm(num);
+         ohashput(resultbbs, bbnm, ohashget(resultbbs, bbnm) :: [[nm; e]])}};
+  fillht1();
+  maxst = foldl(fun(l, r) if (l>r) l else r, 0, map [nm;st] in sched do st);
+
+  ohashput(phirenames, bbname, mkbbnm(maxst));
+  bblist = map n in [0..maxst+1] do mkbbnm(n);
+  // Link them together
+  nexts = mkhash();
+  foldl(fun(l,r) {
+     ohashput(nexts, l, r);
+     return r}, car(bblist), cdr(bblist));
+  visit:ir2split (irbblock:bb) {
+     once irbblock {
+        bblock -> {
+           newbbs = map b in bblist do {
+              mk:node(   name = b,
+                         c = ohashget(resultbbs, b),
+                         t =
+                           aif(chk = ohashget(nexts, b)) {
+                             'br_label'(chk)
+                           } else t
+                     )};
+           return newbbs}}}}}
+
+\phcode{litinclude "./plggen.hl"}
+
+\pfcode{
+function ll_to_hls_mkgraph() {mkhash():mkhash()}
+function ll_to_hls_addnode(ordgraph, n) {
+ <nodes:_> = ordgraph;
+ ohashput(nodes, n, n)}
+function ll_to_hls_addedge(ordgraph, f, t) {
+ <_:edges> = ordgraph;
+  prev = ohashget(edges, f);
+  ohashput(edges, f, t:prev)}}
+
+\pfcode{
+%"ir2:irbblock -> *ir2split:irbblock"
+function ll_to_hls_bbs_prep(aenv, bb0, types, phirenames) {
+   // 1. Get a list of memories involved
+  <memorders:bb> = ll_to_hls_bb_memories(aenv, bb0);
+   bb1 = ll_to_hls_bb_splitops(aenv, bb);
+   println("----------------------BB_MEM_");
+   println(bb1);
+   println("----------------------");
+   bb1eqns = ll_to_hls_bb_equations(aenv, bb1);
+   iter i in bb1eqns do println(i);
+   bbresults = run_clpfd(bb1eqns);
+   println("----------------------");
+   iter i in bbresults do println(i);
+   println("----------------------");
+   newbbs =  ll_to_hls_multiply_bblocks(aenv, bb1, bbresults, phirenames);
+   iter i in newbbs do println(i);
+   println("----------------------");
+   return newbbs   
+}}
+
+\pfcode{
+function ll_to_hls_rename_phis(t, ht) {
+   visit:hls0 /rec/ (top: t) {
+      deep phiarg {
+         p -> {
+            nlabel = aif(chk = ohashget(ht, label)) chk else label;
+            mk:node(label = nlabel)}}}}}
+
+%%%%%%%%%%

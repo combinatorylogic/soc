@@ -1,0 +1,55 @@
+% literate:
+
+In order to get the most benefit out of our pipelined kernels we need to provide special
+enqueue functionality.
+
+It should allow to:
+
+\begin{itemize}
+\item Define step and increment arguments (ideally, check if they match the pipeline pragma)
+\item Define the required range - must be a multiple of pipeline depth
+\item Define a way to accumulate the result - e.g., a reduction function, a direct memory transfer (and for
+   demo purposes a direct video memory transfer)
+\item Do not expect the user to know the pipeline depth in advance (and it may change depending on the target
+   architecture and optimisation level)
+\end{itemize}
+
+Available reductions are:
+
+\begin{itemize}
+\item \verb|pack(N,M)| - chop off $N$ bits out of the combined output register and store as $M$ bits word
+\item \verb|padding(V)| - if total output bit width is less than $N*C$, add padding on the right of the last output word
+\item \verb|sum(N)| - add all the N-bit values, return a single value
+\item \verb|and(N)| - bit and all the N-bit values, return a single value
+\item \verb|or(N)| - bit or all the N-bit values, return a single value
+\end{itemize}
+
+
+Code generation sequence is following:
+
+\begin{itemize}
+\item Core instances are created
+\item Inline instruction for broadcasting the common parameters
+\item Outer loop if width is more than $C * D$
+\item Inline instruction for setting step parameters
+\item Issue and wait instruction
+\item Accumulate instruction
+\end{itemize}
+
+
+A proposed syntax is following:
+
+\pfcode{
+##syntax of pfclike in clcode, inner:
+  ' "::enqueue" "<" [clqident]:kernel "," [clqident]:step "," [clqident]:inc ","
+                    [clexpr]:count ">" "(" ecslist<[clexpr0],",">:args ")" "{"
+     eslist<[clreduction]>:rs
+   "}"'
+}
+ + {
+      clreduction := { "reduction:" 
+   }
+{
+}
+
+%%%%%%%%%%%%%

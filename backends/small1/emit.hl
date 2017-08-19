@@ -664,10 +664,13 @@ function small1_intrinsic_call(fp, args)
   | '_perfcounter2' -> ['PUSHCOUNTER'('n'(2))]
   
   | '_custom2_0'
+  | '_custom2_0b'
   | '_custom2_1'
   | '_custom1_1'
   | '_custom1_0'
   | '_custom0_0'
+  | '_custom1_0b'
+  | '_custom0_0b'
   | '_custom0_1' -> mkcustom(args)
 
   | '_dbg' -> [@car(args);@cadr(args); 'ALU_DBG'(); 'POP'()]
@@ -823,17 +826,18 @@ function small1_post_pinned(mdl)
 \pfcode{
 function small1_inline_pred(f) {
   is_inline(l) = find(fun(k) match k with 'inline'() -> true | else -> [], l);
-  visit:ir2(irtoplevel:f) {
-    deep irtoplevel {
-      %function -> if(body) is_inline(annotations) else []
-    | else -> []}}}}
+  if(f)
+   visit:ir2(irtoplevel:f) {
+     deep irtoplevel {
+       %function -> if(body) is_inline(annotations) else []
+     | else -> []}}}}
 
 \pfcode{
 function small1_backend_passes(mdl, fnm)
 collector(vladd, vlget) {
   envtypes = ll_propagate_types(mdl);
   mdl2 = ll_annotate_geps(envtypes, mdl);
-  mdl2x = hoist_inlined_verilog(vladd, mdl2);
+  mdl2x = hoist_inlined_verilog(vladd, mdl2, ['stack_data_a';'stack_data_b'], hoist_argfun_default);
  <[env;types]> = envtypes;
   mdl2yo = small1_legalise_binops(types, mdl2x);
   mdl2y =  small1_legalise_terms(mdl2yo);
@@ -841,6 +845,7 @@ collector(vladd, vlget) {
   mdl2z1 = ir2_inline(small1_inline_pred, mdl2z);
   mdl2z2 = ir2_inline(small1_inline_pred, mdl2z1);
   mdl3 = ir2_functionpass(mdl2z2, ir2remove_phis_pass);
+
   envtypes = ll_propagate_types(mdl3);
  <[env;types]> = envtypes;
   irl =  small1_tree_lowering(mdl3);

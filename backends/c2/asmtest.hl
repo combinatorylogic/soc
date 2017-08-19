@@ -1,0 +1,64 @@
+include "asm.hl"
+
+
+function test() {
+  srccode0 =
+"
+   start:
+      r2 = #999
+      r3 = #666
+      r4 = #555
+      r5 = r3 + r4 #10
+      r6 = r5 + r5
+      r10 = #1024
+      M[r10++#1] = r6
+      M[r10++#1] = r6
+      M[r10++#1] = r6
+      jmp start
+      nop
+      nop
+      nop
+";
+  srccode1 =
+"
+   start:
+      r2 = #1
+   loop:
+      r2 = r2 + r1
+      r3 = r2 == # 10
+      jmpc (r3) @exit
+      nop
+      jmpr @loop
+   exit:
+      jmp start
+";
+  srccode =
+"
+  start:
+      r2 = #1
+      r3 = #65540
+      r4 = #127
+      M[r3] = r4
+  loop:
+      M[r3] = r2
+      r2 = r2 + r1
+      r4 = r2 == #100
+      jmpc (r4) @exit
+      nop
+      jmp loop
+  exit:
+      jmp start
+";
+  src = parse srccode as c2asmp;
+  <ht:c> = c2labels(0, src);
+   s1 = c2exprs(ht, c);
+   
+   out = map append s in s1 do c2encode_entry(s);
+   hex(n) =
+      .net(n): {
+         leave ((Int32)n).ToString("x");
+      };
+   iter o in out do println(hex(o))
+}
+
+test()
