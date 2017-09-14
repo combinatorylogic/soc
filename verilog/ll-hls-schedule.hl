@@ -207,18 +207,9 @@ function ll_to_hls_bbs_prep(aenv, bb0, types, phirenames) {
    // 1. Get a list of memories involved
   <memorders:bb> = ll_to_hls_bb_memories(aenv, bb0);
    bb1 = ll_to_hls_bb_splitops(aenv, bb);
-   println("----------------------BB_MEM_");
-   println(bb1);
-   println("----------------------");
    bb1eqns = ll_to_hls_bb_equations(aenv, bb1);
-   iter i in bb1eqns do println(i);
    bbresults = run_clpfd(bb1eqns);
-   println("----------------------");
-   iter i in bbresults do println(i);
-   println("----------------------");
    newbbs =  ll_to_hls_multiply_bblocks(aenv, bb1, bbresults, phirenames);
-   iter i in newbbs do println(i);
-   println("----------------------");
    return newbbs   
 }}
 

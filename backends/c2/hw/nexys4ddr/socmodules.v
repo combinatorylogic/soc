@@ -55,7 +55,7 @@ wire vga_clsrq;
 
 wire vga_clsack;
 
-wire [15:0] vmem_in_addr;
+wire [19:0] vmem_in_addr;
 
 wire [7:0] vmem_in_data;
 wire vmem_we;
@@ -65,11 +65,10 @@ wire vmem_bufswap;
 wire vga_scan;
 
 
-wire                       rgb;
-assign vga_red = {rgb, rgb, rgb, rgb};
-assign vga_green = {rgb, rgb, rgb, rgb};
-assign vga_blue = {rgb, rgb, rgb, rgb};
-
+wire                    [3:0]   rgb;
+assign vga_red = rgb;
+assign vga_green = rgb;
+assign vga_blue = rgb;
 
 vgatopgfx vga1(.clk(clk),
                .rst(rst),

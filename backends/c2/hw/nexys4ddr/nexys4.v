@@ -116,8 +116,8 @@ module socram(input clk,
               input [31:0]      data_b_in,
               input [31:0]      data_b_we);
 
-   parameter RAM_DEPTH = 8192;
-   parameter INIT_FILE = "custom.hex";
+   parameter RAM_DEPTH = 8192 * 2;
+   parameter INIT_FILE = "../../custom.hex";
    
    reg [31:0]                   mem [0:RAM_DEPTH-1];
 
@@ -177,7 +177,7 @@ module hls_Mul(input clk,
    reg [31:0]                tmp4;
    assign out = tmp4;
 
-   generic_mul #(.size(32),.level(4)) mul1 (.clk(clk),
+   generic_mul #(.size(32),.level(3)) mul1 (.clk(clk),
                                             .a(p0),
                                             .b(p1),
                                             .pdt(out));

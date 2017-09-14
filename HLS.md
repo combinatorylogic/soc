@@ -264,3 +264,16 @@ It's planned to add support for:
 And, of course, there is a lot of optimisations that the HLS compiler can do.
 
 
+# NoC:
+
+Another vector of attack on parallelism is to utilise the Network-on-Chip pattern. The translation is, roughly, following:
+
+* Inferred or explicitly specified concurrent processes in the source code are converted into dedicated CPU cores, each with its own set of extended instructions
+* Communications channels between the concurrent processes are identified and implemented using whatever is suitable - in some cases it can be a single register, in the others it may be a FIFO or anything else.
+* Each concurrent process code is compiled independently for its own CPU (besides different extensions, in theory even the basic ISAs can be different)
+* The whole thing is synthesised, with compiled code for each of the CPU burned into a ROM.
+
+So, the low level primitives for NoC synthesis are a communicating concurrent process and a communication channel. We can extend the source language with explicit means of expressing 
+such primitives.
+
+Following the old C tradition, a process primitive is represented as a function. 

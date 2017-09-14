@@ -10,8 +10,8 @@ SYN_FILES += ./3rdparty/uart.v
 SYN_FILES += ./3rdparty/uart_tx.v
 SYN_FILES += ./3rdparty/uart_rx.v
 SYN_FILES += ./3rdparty/vgafifo.v
-SYN_FILES += vga640x480mono.v
-SYN_FILES += vgatop640x480mono.v
+SYN_FILES += vga640x480grey.v
+SYN_FILES += vgatop640x480grey.v
 
 CREATE_SCRIPTS = ip/clk_wiz_0.tcl
 

@@ -148,8 +148,8 @@ function ll_to_hls_bb_splitops(aenv, bb)
        | binary -> {
            if(op == 'Mul')
             symbols(dst1) {
-              [[dst1; 'op_start'('Mul', dst1, [l;r], 5, dst)];
-               [dst;  'op_commit'('Mul', dst1, 'var'(dst1), 5)]]
+              [[dst1; 'op_start'('Mul', dst1, [l;r], 4, dst)];
+               [dst;  'op_commit'('Mul', dst1, 'var'(dst1), 4)]]
             } else [[dst;node]]}
        | else -> [[dst;node]]};
       deep irpair: e(nm);

@@ -114,7 +114,7 @@ endmodule
 module socram(input clk,
               input             rst,
 
-              output [31:0]     data_a,
+              output reg [31:0] data_a,
               input [31:0]      addr_a,
               
               output reg [31:0] data_b,
@@ -124,33 +124,28 @@ module socram(input clk,
               input [31:0]      data_b_we);
 
    parameter RAM_DEPTH = 1024;
+`ifdef ENABLE_EXT
+   parameter INIT_FILE = "../../custom_ice.hex";
+`else
    parameter INIT_FILE = "ram.hex";
+`endif
    
    reg [31:0]                   mem [0:RAM_DEPTH-1];
-   wire                         strobe_b_next;
-   wire [31:0]                  data_b_next;
-   
    
    initial begin
       if (INIT_FILE != "")
          $readmemh(INIT_FILE, mem);
    end
 
-   assign data_a = mem[addr_a];
-   assign data_b_next = mem[addr_b];
-
-   assign strobe_b_next = (addr_b[31:16] == 0);
    
    always @(posedge clk)
-     if (~rst) begin
-        strobe_b <= 0;
-        data_b <= 0;
-     end else begin
-        if (data_b_we & strobe_b) begin
+     begin
+        if (data_b_we & (addr_b[31:16] == 0)) begin
            mem[addr_b] <= data_b_in;
         end
-        strobe_b <= strobe_b_next;
-        data_b <= data_b_next;
+        data_a <= mem[addr_a];
+        data_b <= mem[addr_b];
+        strobe_b <= (addr_b[31:16] == 0);
      end
-
+   
 endmodule

@@ -23,17 +23,6 @@ int32 mand(int32 cx, int32 cy)
   return 100;
 }
 
-              
-void _printnum(int32 n)
-{
-        int32 buf[16];
-        itoa(n, buf);
-        int32 *channel = (int32*)(65536);
-        for(int32 i = 0; buf[i]!=0; i++) {
-                *channel = buf[i];
-        }
-}
-
 void bootentry()
 {
   int32 y;

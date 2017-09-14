@@ -4,14 +4,14 @@ module vgagfx(input  clk,      // system clock (100mhz)
               input         clk25mhz, // vga pixel clock (25.13MHz)
               
               input [7:0]   vmem_data,
-              output [15:0] vmem_addr,
+              output [19:0] vmem_addr,
 
               output        scan,
               
               // Monochrome VGA pins
               output        hsync,
               output        vsync,
-              output        rgb    // monochrome output, all three channels 0 or 1
+              output [3:0]  rgb    // monochrome output, all three channels 0 or 1
               );
 
    // Pixels are fed via a small FIFO
@@ -24,12 +24,12 @@ module vgagfx(input  clk,      // system clock (100mhz)
    wire [7:0]            fifo_out;
    wire                  fifo_empty;
 
-   reg [15:0]            vmpos;
+   reg [19:0]            vmpos;
    
    assign vmem_addr = vmpos;
    assign fifo_in = vmem_data;
    
-   parameter VMEM_END = 640*480/8 - 1;
+   parameter VMEM_END = 640*480/2 - 1;
 
    smallfifo1 fifo1(.rst(rst),
                    
@@ -98,56 +98,47 @@ module vgagfx(input  clk,      // system clock (100mhz)
 
    // While in a visible area, keep sucking bits from the fifo, hoping it is being well fed
    // on the other side.
-   reg [7:0] fontbits;
-   reg [7:0] fontnext;
+   reg [7:0] out_current;
+   reg [7:0] out_next;
    
-   wire      nextbit;
-   assign nextbit = fontbits[7];
-   assign rgb = visible?nextbit:0;
+   wire [3:0] nextbit;
+   assign nextbit = out_current[7:4];
+   assign rgb = visible?nextbit:4'b0;
    
-   reg [2:0] bitcount;
-   reg       getnext;
+   reg [1:0] bitcount;
 
    // What a mess!!!
    always @(posedge clk25mhz)
      if (!rst) begin
         bitcount <= 0;
-        fontbits <= 0;
-        fontnext <= 0;
+        out_current <= 0;
+        out_next <= 0;
         ready <= 0;
         fifo_rd <= 0;
-        getnext <= 0;
      end else begin
         if (!ready) begin
            if (fifo_rd) begin
               fifo_rd <= 0;
-              fontbits <= fifo_out;
+              out_current <= fifo_out;
               ready <= 1;
-	      bitcount <= 7;
+	      bitcount <= 0;
            end else fifo_rd <= 1;
         end else
           if (visible) begin
-             if (bitcount < 7) begin
-                bitcount <= bitcount + 1;
-                fontbits <= fontbits << 1;
-                if (fifo_rd) begin
-                   fontnext <= fifo_out;
-                   fifo_rd <= 0;
-                   getnext <= 0;
-                end else 
-                  if ((bitcount > 4) && getnext) begin
-                    fifo_rd <= 1;
-                  end
-             end else begin // if (bitcount < 7)
+             if (bitcount == 0) begin
+                bitcount <= 1;
+                out_current <= out_current << 4;
+                fifo_rd <= 1;
+             end else begin
                 fifo_rd <= 0;
+                out_current <= out_next;
+                out_next <= fifo_out;
                 bitcount <= 0;
-                fontbits <= fontnext;
-                getnext <= 1;
              end
-          end else begin
-	     fifo_rd <= 0; // if (visible)
-	     fontbits <= fontnext;
-	  end
+	  end else begin
+             fifo_rd <= 0; // if (visible)
+             bitcount <= 0;
+          end
      end
    
 endmodule

@@ -6,7 +6,7 @@
 \pfcode{
 define c2_enable_mul = mkref([])
 define c2_enable_cmp = mkref(true)
-define c2_enable_barrel = mkref(true)
+define c2_enable_barrel = mkref([])
 }
 
 \pfcode{

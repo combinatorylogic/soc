@@ -50,7 +50,7 @@ wire vga_clsrq;
 
 wire vga_clsack;
 
-wire [15:0] vmem_in_addr;
+wire [19:0] vmem_in_addr;
 
 wire [7:0] vmem_in_data;
 wire vmem_we;

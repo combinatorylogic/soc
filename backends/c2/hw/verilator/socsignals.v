@@ -6,7 +6,7 @@
 
               output vga_dump,
 
-              input [15:0] vmem_out_addr,
+              input [19:0] vmem_out_addr,
               output [7:0] vmem_out_data,
 
               output [7:0] LED,

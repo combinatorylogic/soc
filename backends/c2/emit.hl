@@ -350,6 +350,7 @@ ast ir2isa : ir2nossa () {
          | reg(ident:nm)
          | zero()
          | const(number:n)
+         | label(lblident:name)
          ;
    c2label = rel(lblident:name)
            | abs(lblident:name)
@@ -613,6 +614,7 @@ function c2_legalise_immediates(src) {
             reg -> (nm === 'R0')||(nm === 'R1')
           | zero -> true
           | const -> (n > min) && (n < max)
+          | label -> true
           | else -> []}}};
    isconstx(i, bits) = {
       <min:max> = c2_signed_range(bits);
@@ -630,6 +632,7 @@ function c2_legalise_immediates(src) {
               vreg -> node
             | reg  -> node
             | zero -> 'reg'('R0')
+            | label -> symbols(nn) {add('move_macro'('vreg'(nn), node)); 'vreg'(nn)}
             | const -> if (n == 1) 'reg'('R1')
                        else if (n == 0) 'reg'('R0')
                        else symbols(nn) {add('move_macro'('vreg'(nn), node)); 'vreg'(nn)}}};
@@ -896,6 +899,7 @@ function c2_flatten(src) {
        reg -> nm
      | const -> node
      | zero -> node
+     | label -> node
      | vreg -> ccerror('IMPOSSIBLE'())};
      deep c2instr {
        label -> node
@@ -1054,6 +1058,21 @@ function c2_optimise_again(mdl) {
 \phcode{include "./verilog.hl"}
 
 \pfcode{
+function c2_emit_data(e) {
+   visit:ir2 (irtoplevel: e) {
+     deep irval {
+        array -> elts
+      | integer -> 'const'(v)
+      | zero -> 'const'(0)
+      | else -> ccerror('todo'(node))};
+     deep irtoplevel {
+        global ->
+          ['label'(name); // TODO: prefix?
+           'data'(v)]
+      | else -> ccerror('IMPOSSIBLE'())}}}}
+
+
+\pfcode{
 function c2_driver_mdl(mdl, fnm)
 collector(vladd, vlget) {
    envtypes = ll_propagate_types(mdl);
@@ -1071,8 +1090,9 @@ collector(vladd, vlget) {
    asm0 = map append t in mdl2 do 
      visit:ir2 (irtoplevel: t) {
         once irtoplevel {
-          %function -> if (body) c2_driver(node) else []
+          %function -> if (body && not(c2_inline_pred(node))) c2_driver(node) else []
         | comment -> []
+        | global -> c2_emit_data(node)
         | else -> ccerror('UNSUPPORTED'(node))}};
    asm = 'label'('__start'):
          'i'('ldimmed'('SP', 'const'(^c2_ram_end))):
@@ -1086,8 +1106,7 @@ collector(vladd, vlget) {
                  | else -> fprintln(fo, %S<<(node))}}}});
        s1 = c2exprs(ht, c2macros(c0));
    
-       out = map append s in s1 do {
-          c2encode_entry(s)};
+       out = map append s in s1 do c2encode_entry(s);
        hex(n) =
         .net(n): {
           leave ((Int32)n).ToString("x");

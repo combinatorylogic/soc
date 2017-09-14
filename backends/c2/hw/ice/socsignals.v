@@ -11,4 +11,13 @@
                  output LED7,
                  output LED8,
 
-
+`ifdef ICE_DEBUG                       
+                 output PCdebug1,
+                 output PCdebug2,
+                 output PCdebug3,
+                 output PCdebug4,
+                 output PCdebug5,
+                 output PCdebug6,
+                 output PCdebug7,
+                 output PCdebug8,
+`endif                      

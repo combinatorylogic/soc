@@ -28,13 +28,11 @@ void dumpmem()
         sprintf(fname, "vgadump%04d.xpm", vgacounter);
         vgacounter++;
         f = fopen(fname, "w");
-        fprintf(f, "P1\n640 480\n");
+        fprintf(f, "P2\n640 480 32\n");
         for (int i = 0; i < 480; i++) {
-                for (int j = 0; j < 640/8; j++) {
-                        unsigned char c = vgamem[j + i*(640/8)];
-                        for (int k = 0; k<8; k++) {
-                                fprintf(f, "%d ", !((c>>(7-k))&1));
-                        }
+                for (int j = 0; j < 640/2; j++) {
+                        unsigned char c = vgamem[j + i*(640/2)];
+                        fprintf(f, "%d %d ", (c>>4)&0xf, c&0xf);
                 }
                 fprintf(f, "\n");
         }

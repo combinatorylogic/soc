@@ -119,6 +119,9 @@ function ll_to_hls_lift_wires_bb(bb, dophis) {
   // We have to do it in two passes here, because it's possible to use
   // a register before it's lifted to a wire within one basic block.
   visit:hls0 /rec/ (bblock: pass1()) {
+     once iop {
+        phi -> node()
+      | deep -> { else -> node() }};
      deep value {
         reg -> mk:reg(rewrite(id))
       | else -> node()}}}}
@@ -219,7 +222,6 @@ function ll_to_hls_propagate_pipeline(aenv, top, ppname, bbs, endregs, threadreg
 
    endregsh = mkhash();
    rewritebb(bb, bbname, bbregs, bbregsht) = {
-      writeline('RW'('BBNAME'(bbname),@bbregs));
       visit:hls0 /rec/ (bblock: bb) {
         deep instr {
            i -> if (ohashget(regsh, dst)) { // prefix it with a bb name
@@ -229,7 +231,6 @@ function ll_to_hls_propagate_pipeline(aenv, top, ppname, bbs, endregs, threadreg
                 } else node()};
         deep value {
            reg -> aif(chk = ohashget(bbregsht, id)) {
-               writeline('BBR'(chk));
               <[iid1;prev;next;tp]> = chk;
                mk:node(id = next)} else node()
          | else -> node()};
@@ -424,8 +425,6 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
         getbbs()};
    bbs = getbbslist();
 
-   println('BBS='(@bbs));
-
    bbsc = mkhash();
    iter b in bbs do ohashput(bbsc, b, b);
 
@@ -448,7 +447,6 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
          | else -> [[srclabel; 'v'; node()]]}};
 
    ephis = getphis(ohashget(bbsh, lentry));
-   println('PHIS'(@ephis));
    // Entry registers are all of the phis that are, well, registers (not wires)
    // Exit registers are all the registers in the phi arguments that are coming from a back edge
    rentries = map append [reg;itp;otp;args] in ephis do {
@@ -458,8 +456,6 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
          if (not (lbl === entrybb) && tp == 'reg') {
             [id]} else []
       }};
-   println('ENTRIES'(@rentries));
-   println('EXITS'(@rexits));
 
    //3. Apply the pipeline extraction and pipeline register propagation passes.
    ppname = %Sm<<(idname, "_pipe");
@@ -535,13 +531,11 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
             get()};
       
       rregs = map [reg;itp;otp;args] in ephis do {
-         println('ARGS'(@args));
          mk:reissuereg:r(nm=reg, tp = otp, init=getinitarg(args), step = getstepval(args))
       };
 
       exitcnd = getexitcnd(ohashget(bbsh, lentry));
       stepinstrs = getinsns(ohashget(bbsh, lentry)) :: ^negation;
-      println('STEP'(lentry, stepinstrs));
       final = getinsns(ohashget(bbsh, lexit));
 
       enq = mk:bblock:bb(
@@ -566,10 +560,10 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
              bs = [],
              next = mk:ret());
 
-      pprnt = gen_pprint_ast(hls0, bblock);
-      println('-------------------*1');
-      println(pprnt(enq));
-      println('-------------------*2');
+      //pprnt = gen_pprint_ast(hls0, bblock);
+      //println('-------------------*1');
+      //println(pprnt(enq));
+      //println('-------------------*2');
       visit:hls0 /rec/ (top: ntop2) {
          deep bblock {
             bb -> tp(thisnodesrc())};

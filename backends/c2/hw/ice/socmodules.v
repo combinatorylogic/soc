@@ -1,5 +1,18 @@
 /* Memory mapped modules */
 
+`ifdef ICE_DEBUG
+wire [7:0] PCdebug;
+
+assign PCdebug1 = PCdebug[0];
+assign PCdebug2 = PCdebug[1];
+assign PCdebug3 = PCdebug[2];
+assign PCdebug4 = PCdebug[3];
+assign PCdebug5 = PCdebug[4];
+assign PCdebug6 = PCdebug[5];
+assign PCdebug7 = PCdebug[6];
+assign PCdebug8 = PCdebug[7];
+`endif
+
 // We cannot simulate PLL:
 `ifdef ICE_ROUTED_SIM
    assign clk = sys_clk_in;

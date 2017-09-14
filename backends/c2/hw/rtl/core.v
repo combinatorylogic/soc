@@ -20,9 +20,12 @@
  `define RAM_REGISTERED_OUT 1
 `endif
 
+`ifdef ICE
+ `define RAM_REGISTERED_OUT 1
+`endif
+
 `ifndef ICE
  `define REGFILE_REGISTERED_OUT 1
- // `define DISABLE_CMPOPS 1
 `endif
 
 // Uncomment this to disable microops support (CALL/RET)
@@ -144,6 +147,7 @@ module cpu(input clk,
    
    reg [31:0]     fetch_PC; // PC value at the end of FETCH stage / in DECODE0 stage
    wire [31:0]    decode0_PC;
+
    
    assign decode0_PC = fetch_PC;
     
@@ -239,6 +243,13 @@ module cpu(input clk,
    reg [31:0]     decode_Instr;
    reg [31:0]     decode_PC;
 
+   wire [31:0]    decode0_reg1addr_next1;
+   wire [31:0]    decode0_reg2addr_next1;
+
+   assign decode0_reg1addr_next1 = stall?decode_reg1addr:decode0_reg1addr_next;
+   assign decode0_reg2addr_next1 = stall?decode_reg2addr:decode0_reg2addr_next;
+   
+
    always @(posedge clk)
      if (~rst) begin
         decode_reg1addr <= 0;
@@ -252,8 +263,8 @@ module cpu(input clk,
         
         
      end else begin
-        decode_reg1addr <= stall?decode_reg1addr:decode0_reg1addr_next;
-        decode_reg2addr <= stall?decode_reg2addr:decode0_reg2addr_next;
+        decode_reg1addr <= decode0_reg1addr_next1;
+        decode_reg2addr <= decode0_reg2addr_next1;
         decode_PC <= (stall|fetch_microops)?decode_PC:decode0_PC;
         decode_Instr <= stall?decode_Instr:decode0_Instr;
         decode0_Instr_r <= decode0_Instr;
@@ -394,6 +405,10 @@ module cpu(input clk,
    reg [4:0]      exec_reg1addr;
    reg [4:0]      exec_reg2addr;
 
+`ifdef ICE_DEBUG
+   assign PCdebug = exec_PC;
+`endif
+   
    always @(posedge clk)
      if (~rst) begin
         exec_Instr <= 0;
@@ -569,7 +584,6 @@ module cpu(input clk,
    assign mem_queue_addr_0 = exec_ram_addr_b;
    assign mem_queue_data_0 = exec_ram_data_out_b;
    assign mem_queue_we_0 = exec_ram_we_out;
-   
    
    
    assign ram_addr_in_b = exec_ram_addr_b;
@@ -763,7 +777,12 @@ module cpu(input clk,
 
    assign mem_out_we_next = mem_typei |
                             (mem_typea && (mem_opcode_typeA!=0)) |
-                            (mem_typem && (mem_opcode_typeM != 1));
+                            (mem_typem && (mem_opcode_typeM == 3));
+
+   wire       mem_out_we_delayed_next;
+   
+   assign mem_out_we_delayed_next = mem_out_we_next | (mem_typem && (mem_opcode_typeM != 1));
+   
 
    wire [4:0] mem_out_reg_next;
    
@@ -786,6 +805,7 @@ module cpu(input clk,
    reg [31:0] wb_PC;
    reg [31:0] mem_out;
    reg        mem_out_we;
+   reg        mem_out_we_delayed;
    reg [4:0]  mem_out_reg;
    reg        wb_readmem;
    
@@ -801,6 +821,7 @@ module cpu(input clk,
         wb_PC <= 0;
         mem_out <= 0;
         mem_out_we <= 0;
+        mem_out_we_delayed <= 0;
         mem_out_reg <= 0;
         wb_readmem <= 0;
      end else begin
@@ -808,6 +829,7 @@ module cpu(input clk,
         wb_PC <= stall?wb_PC:mem_PC;
         mem_out <= stall?mem_out:mem_out_next;
         mem_out_we <= stall?mem_out_we:mem_out_we_next;
+        mem_out_we_delayed <= stall?mem_out_we_delayed:mem_out_we_delayed_next;
         mem_out_reg <= stall?mem_out_reg:mem_out_reg_next;
         wb_readmem <= stall?wb_readmem:(mem_sd_class==16);
      end // else: !if(~rst)
@@ -825,8 +847,11 @@ module cpu(input clk,
                          ((mem_queue_addr_0 == mem_queue_addr_2)&mem_queue_we_2)?mem_queue_data_2:
                          ((mem_queue_addr_0 == mem_queue_addr_3)&mem_queue_we_3)?mem_queue_data_3:ram_data_in_b;
    wire [31:0] wb_out_next;
-
+   wire        wb_out_we_next;
+   
+   
    assign wb_out_next = wb_readmem?wb_ram_input:mem_out;
+   assign wb_out_we_next = mem_out_we_delayed;
 
    assign fwd_wb = wb_out_we;
    assign fwd_wb_reg = wb_out_reg;
@@ -839,7 +864,7 @@ module cpu(input clk,
         wb_out_reg <= 0;
      end else begin
         wb_out <= stall?wb_out:wb_out_next;
-        wb_out_we <= stall?wb_out_we:mem_out_we;
+        wb_out_we <= stall?wb_out_we:wb_out_we_next;
         wb_out_reg <= stall?wb_out_reg:mem_out_reg;
      end
    
@@ -871,8 +896,8 @@ module cpu(input clk,
       .PC(fetch_PC),  // PC value to be fed as a virtual register R31
       
 `ifdef REGFILE_REGISTERED_OUT
-      .addr1(decode0_reg1addr_next),
-      .addr2(decode0_reg2addr_next),
+      .addr1(decode0_reg1addr_next1),
+      .addr2(decode0_reg2addr_next1),
 `else
       .addr1(decode_reg1addr),
       .addr2(decode_reg2addr),
@@ -916,22 +941,19 @@ module cpu(input clk,
         */
         $display("EXEC    PC=%0d \t INSN=%x", exec_PC, exec_Instr);
         $display("        ARG1(R%0d)=%0d \t ARG2(R%0d)=%0d", exec_reg1addr, exec_arg1, exec_reg2addr, exec_arg2);
-        // if (fwd_simple) $display("     SIMPLE FWD: R%0d = %d", fwd_simple_reg, fwd_simple_data);
+ `ifdef DEBUGFWD
+        if (fwd_simple) $display("     SIMPLE FWD: R%0d = %d", fwd_simple_reg, fwd_simple_data);
+        if (fwd_mem) $display("     MEM FWD: R%0d = %d", fwd_mem_reg, fwd_mem_data);
+        if (fwd_wb) $display("     WB FWD: R%0d = %d", fwd_wb_reg, fwd_wb_data);
         if (exec_isext)   $display("        EXT OP");
         if (exec_typem)   $display("        MEM OP");
         if (exec_typei)   $display("        IMMED OP");
         if (exec_typem & exec_isstore) $display("        STORE OP");
-        /*
-        if (ram_we_out) begin
-           $display("       MEM WRITE: %0x <= %0x", ram_addr_in_b, ram_data_out_b);
-        end
-        */
+ `endif
         $display("MEM     PC=%0d \t INSN=%x", mem_PC, mem_Instr);
         $display("WB      PC=%0d \t INSN=%x", wb_PC, wb_Instr);
         if(mem_out_we)
           $display("        WB: R%0d <= %0d", mem_out_reg, wb_out_next);
-
-        // $display("PORT B: %0d -> %0d",  mem_queue_addr_1, ram_data_in_b);
      end
 `endif
 

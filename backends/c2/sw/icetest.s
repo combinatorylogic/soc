@@ -1,8 +1,8 @@
       nop
 start:
       r9 = #data
-      r2 = #20
-      M[R9] = r2  
+      r8 = #20
+      M[R9] = r8
       r2 = #1
       r3 = #65540
       r4 = #127
@@ -22,6 +22,6 @@ loop:
 
 
 data: 
-      .data 0 ;
+      .data 10 ;
 
 

@@ -15,7 +15,7 @@
 {
    dv = %flt:parse(%S<<(d));
    iv = dbl_to_fix(fixed_point_width - (32 - fixed_point_width), dv);
-   println('DX:'(%S<<(d), iv));
+   // println('DX:'(%S<<(d), iv));
    return 'integer'('i32', iv)
 }
 
@@ -23,7 +23,7 @@
 {
    dv = %flt:parse(%S<<(d));
    iv = dbl_to_fix(fixed_point_width, dv);
-   println('D:'(%S<<(d), iv));
+   // println('D:'(%S<<(d), iv));
    return 'integer'('i32', iv)
 }
 

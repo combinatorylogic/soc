@@ -40,17 +40,24 @@ module regfile
 
 // PC+1 if microops enabled, otherwise PC+2
 
-   wire [4:0]                   delta;
+   wire [31:0]                   delta1;
+   wire [31:0]                   delta2;
+   
 
-   assign delta = MICROOPS_ENABLED?1:2;
+   assign delta1 = MICROOPS_ENABLED?1:2;
+`ifdef REGFILE_REGISTERED_OUT
+   assign delta2 = 0;
+`else
+   assign delta2 = -1;
+`endif
    
    assign out1_next = addr1==0?0:
                       (addr1==1?1:
-                       (addr1==31?(PC+delta):
-                        (addrw==addr1?wdata:mem[addr1] )));
+                       (addr1==31?(PC+(delta1+delta2)):
+                        (addrw==addr1?wdata:mem[addr1])));
    assign out2_next = addr2==0?0:
                       (addr2==1?1:
-                       (addr2==31?(PC+delta):
+                       (addr2==31?(PC+(delta1+delta2)):
                         (addrw==addr2?wdata:mem[addr2])));
 
 `ifndef  REGFILE_REGISTERED_OUT

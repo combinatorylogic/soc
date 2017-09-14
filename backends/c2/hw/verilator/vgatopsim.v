@@ -2,14 +2,14 @@
 // Must synthesize into 3 * 8x2048 brams
 module vram(input clk,
 	    
-	    input [15:0]     p1_addr,
+	    input [19:0]     p1_addr,
 	    input [7:0]      p1_data,
 	    input 	     p1_we,
 
-	    input [15:0]     p2_addr,
+	    input [19:0]     p2_addr,
 	    output reg [7:0] p2_data);
 
-   reg [7:0] 		 mem[0:38400-1];
+   reg [7:0] 		 mem[0:153600-1];
 
    always @(posedge clk)
      begin
@@ -27,20 +27,20 @@ module vgatopgfxsim(input clk, // 100MHz clk
                     input        clsrq,
                     output reg   clsack,
 
-	            input [15:0] vmem_in_addr,
+	            input [19:0] vmem_in_addr,
 	            input [7:0]  vmem_in_data,
 	            input        vmem_we,
 
-                    input [15:0] vmem_out_addr,
+                    input [19:0] vmem_out_addr,
                     output [7:0] vmem_out_data
                     );
 
 
    reg                     clsing;
-   reg [15:0]              clsaddr;
+   reg [19:0]              clsaddr;
    
 
-   wire [15:0]             vmem_in_addr_x;
+   wire [19:0]             vmem_in_addr_x;
    wire [7:0]              vmem_in_data_x;
    wire                    vmem_we_x;
 
@@ -61,7 +61,7 @@ module vgatopgfxsim(input clk, // 100MHz clk
            clsack <= 0;
         end else if (clsing) begin
            clsaddr <= clsaddr + 1;
-           if (clsaddr == 38400) begin
+           if (clsaddr == 153600) begin
               clsack <= 1;
               clsing <= 0;
            end

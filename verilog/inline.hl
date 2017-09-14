@@ -378,7 +378,6 @@ function hoist_inlined_verilog(out, mdl, argwires, argfun) {
   hoist(args, code) = {
     schk = %S<<(code); // code is it's own hash
     chk = ohashget(ctx, schk);
-    writeline('HOIST'(args, code));
     if (chk) chk(args) else {
       fn = visit:vlinline(itop: code) {
         deep itop {

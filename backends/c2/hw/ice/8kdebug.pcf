@@ -14,3 +14,13 @@ set_io LED8 C3
 set_io LED1 B5
 set_io LED5 C5
 
+
+set_io PCdebug1 P16
+set_io PCdebug2 N16
+set_io PCdebug3 M16
+set_io PCdebug4 K15
+set_io PCdebug5 K14
+set_io PCdebug6 G14
+set_io PCdebug7 J15
+set_io PCdebug8 R16
+

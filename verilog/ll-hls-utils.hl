@@ -5,7 +5,6 @@
 \pfcode{
 %"ir2mem:irtype|integer.type -> integer; get type width in bits"
 function ll_get_itype_width(type,orig) {
-   writeline('ITYPE-WIDTH'(type,orig, clike_parse_inttype(type)));
    match clike_parse_inttype(type) with
      [w;n] -> n
    | else -> 1}}

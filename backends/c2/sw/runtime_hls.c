@@ -1,20 +1,32 @@
+#include "runtime_common.c"
+#include "runtime_extra.c"
 
+inline uint32 _SHR(uint32 a, uint32 b) {
+  uint32 i = b;
+  uint32 r = a;
+  do {
+          r = r >> (uint32)1; i--;
+  } while(i>0);
+  return r;
+}
 
-typedef int32 int;
-typedef uint32 uint;
+inline int32 _ASHR(int32 a, int32 b) {
+  int32 i = b;
+  int32 r = a;
+  do {
+    r = r >> 1; i--;
+  } while(i>0);
+  return r;
+}
 
-// Custom instructions
-void _custom2_0(int32 cmd, int32 x, int32 y);
-void _custom1_0(int32 cmd, int32 x);
-void _custom0_0(int32 cmd);
-void _custom2_0b(int32 cmd, int32 x, int32 y);
-void _custom1_0b(int32 cmd, int32 x);
-void _custom0_0b(int32 cmd);
-int32 _custom0_1(int32 cmd);
-int32 _custom1_1(int32 cmd, int32 x);
-int32 _custom2_1(int32 cmd, int32 x, int32 y);
-void _dbgreg(int32 rnum);
-/////////////////////////
+inline int32 _SHL(int32 a, int32 b) {
+  int32 i = b;
+  int32 r = a;
+  do {
+    r = r << 1; i--;
+  } while(i>0);
+  return r;
+}
 
 __hls void _HLS_IMUL(int32 a0, int32 b0, int32 *ret) {
         *ret = a0*b0;
@@ -93,86 +105,4 @@ inline int32 _ISREM(int32 a, int32 b)
   int32 rem;
   _IDIVMOD(a, b, &rem);
   return rem;
-}
-
-
-void _leds(int32 n)
-{
-        int32 *channel = (int32*)(65540);
-        *channel = n;
-}
-
-typedef void *voidptr;
-
-int32 strlen(int32 s[])
-{
-  int32 l;
-  for (l = 0; s[l]!=0; l++);
-  return l;
-}
-
-void reverse(int32 s[])
-{
-  int32 i, j;
-  int32 c, l;
-  l = strlen(s) - 1;
-  for (i = 0, j = l; i<j; i++, j--) {
-    c = s[i];
-    s[i] = s[j];
-    s[j] = c;
-  }
-}
-
-
-void itoa(int32 n0, int32 s[]) {
-  int32 i, sign;
-  int32 n = n0;
-  int32 nmod;
-
-  if ((sign = n) < 0)  /* record sign */
-    n = -n;          /* make n positive */
-  i = 0;
-  do {       /* generate digits in reverse order */
-    n = _IDIVMOD(n, 10, &nmod);
-    s[i++] = nmod + '0';   /* get next digit */
-  } while (n > 0);     /* delete it */
-  if (sign < 0)
-    s[i++] = '-';
-  s[i] = 0;
-  //s[i] = 0;
-  //_dbg(3, i);
-  reverse(s);
-}
-
-void itoah(int32 n0, int32 s[]) {
-  int32 i, sign;
-  int32 n = n0;
-  int32 nmod;
-     
-  if ((sign = n) < 0)  /* record sign */
-    n = -n;          /* make n positive */
-  i = 0;
-  do {       /* generate digits in reverse order */
-    n = _IDIVMOD(n, 16, &nmod);
-    int32 chr;
-    if (nmod < 10) chr = nmod + '0';
-    else chr = nmod-10+'A';
-    s[i++] = chr;   /* get next digit */
-  } while (n > 0);     /* delete it */
-  if (sign < 0)
-    s[i++] = '-';
-  s[i] = 0;
-  reverse(s);
-}
-
-inline void _printchr(int32 c)
-{
-        *((int32*)65536) = c;
-}
-
-
-inline void _testhalt()
-{
-        int32 *channel = (int32*)(65541);
-        *channel = 1;
 }

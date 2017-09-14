@@ -179,13 +179,12 @@ function ll_genssa_alt_opt(globenv, llenv, src, addpragma) {
  
 \pfcode{
 function prep_hls(env, path, fn, fnm) collector(addpragma, getpragmas) {
-  ohashput(hls_ll_env, '*debug-compiler-ssa*', 1);
-  ohashput(hls_ll_env, '*debug-compiler-ssa-timing*', 1);
+  //ohashput(hls_ll_env, '*debug-compiler-ssa*', 1);
+  //ohashput(hls_ll_env, '*debug-compiler-ssa-timing*', 1);
   // 1. Run the HLS compiler backend for this function and generate
   //    a Verilog module (current path + function name ".v")
  <loops:g2tp:g2> = ll_genssa_alt_opt(env, hls_ll_env, fn, addpragma);
   pragmas = getpragmas();
-  if(pragmas) println('PRAGMAS:'(@pragmas));
   g3 =  ll_to_hls_driver(g2, pragmas, loops);
   g3x = g3;// ll_to_hls_lower_ashr(g3);
   %call-with-output-file(%S<<(fnm, ".v"), fun(fout)

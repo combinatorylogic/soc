@@ -1,5 +1,4 @@
 #include "./runtime_common.c"
-#include "./runtime_extra.c"
 
 
 inline uint32 _SHR(uint32 a, uint32 b) {
@@ -30,7 +29,8 @@ inline int32 _SHL(int32 a, int32 b) {
 }
 
 // Russian peasant multiplication
-int32 _IMUL(int32 a0, int32 b0)
+__hls
+void _HW_ICE_IMUL(int32 a0, int32 b0, int32 *ret)
 {
   int32 a = a0;
   int32 b = b0;
@@ -41,11 +41,17 @@ int32 _IMUL(int32 a0, int32 b0)
     a >>= 1;
     b <<= 1;
   } while (a > 0);
-  return c;
+  *ret = c;
 }
 
-// Integer division
-int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
+inline int32 _IMUL(int32 a0, int32 b0)
+{
+        int32 ret;
+        _HW_ICE_IMUL(a0,b0,&ret);
+        return ret;
+}
+
+__hls void HW_IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod, int32 *Ret)
 {
   int32 nQuotient = 0;
   int32 nPos = -1;
@@ -75,7 +81,15 @@ int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
     ullDividend = 0; nQuotient++;
   }
   *Mod = ullDividend;
-  return nQuotient;
+  *Ret = nQuotient;
+}
+
+// Integer division
+inline int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
+{
+        int32 ret;
+        HW_IDIVMOD(nDividend, nDivisor, Mod, &ret);
+        return ret;
 }
 
 inline int32 _IUDIV(int32 a, int32 b)
@@ -84,7 +98,7 @@ inline int32 _IUDIV(int32 a, int32 b)
   return _IDIVMOD(a, b, &rem);
 }
 
- int32 _ISDIV(int32 a, int32 b)
+inline  int32 _ISDIV(int32 a, int32 b)
 {
   uint32 rem;
   return _IDIVMOD(a, b, &rem);
@@ -103,5 +117,3 @@ inline int32 _ISREM(int32 a, int32 b)
   _IDIVMOD(a, b, &rem);
   return rem;
 }
-
-
