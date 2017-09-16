@@ -108,6 +108,8 @@ function ll_to_hls_lift_wires_bb(bb, dophis) {
      deep instr {
        i -> tp(dst, otp, op)};
      once bbtype { else -> node() };
+     deep value {
+       reg -> mk:reg(rewrite(id))};
      deep itp(dst, otp, op) {
        reg ->
          if (isvalue(op) || skiphi(op)) [mk:instr:i(thisnodesrc(), dst, otp, op)]
@@ -116,15 +118,8 @@ function ll_to_hls_lift_wires_bb(bb, dophis) {
           [mk:instr:i(mk:wire(), newnm, otp, op);
            mk:instr:i(mk:reg(), dst, otp, mk:v(mk:reg(newnm)))]}
       | else -> [mk:instr:i(thisnodesrc(), dst, otp, op)]}};
-  // We have to do it in two passes here, because it's possible to use
-  // a register before it's lifted to a wire within one basic block.
-  visit:hls0 /rec/ (bblock: pass1()) {
-     once iop {
-        phi -> node()
-      | deep -> { else -> node() }};
-     deep value {
-        reg -> mk:reg(rewrite(id))
-      | else -> node()}}}}
+
+  return pass1()}}
 
 \pfcode{
 %"hls0:top -> hls0:top; A temporary (simple) solution:

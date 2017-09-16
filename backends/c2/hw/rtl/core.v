@@ -1,9 +1,4 @@
-// TODO:
-//  * Do something about the EXT stall mess
-
 `timescale 1 ns / 1 ps
-
-// `define DEBUG 1
 
 `include "defines.v"
 
