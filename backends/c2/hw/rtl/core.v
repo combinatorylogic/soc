@@ -457,6 +457,17 @@ module cpu(input clk,
    wire        exec_isext;
    wire        exec_typeb2;
    wire        exec_typem;
+   wire        exec_typea;
+
+   reg         mem_typee;
+   reg         mem_typei;
+   reg         mem_typem;
+   reg         mem_typea;
+
+   assign exec_typea = exec_Instr[2:0] == 0;
+
+   wire        exec_ext_hasout;
+   assign exec_ext_hasout = exec_typee;
    
    assign exec_isext = exec_typee;
    assign exec_typeb2 = exec_Instr[1:0] == 2'b11;
@@ -614,6 +625,16 @@ module cpu(input clk,
    assign exec_PC_next = (exec_Instr[2:1] == 2'b01 )? 
                          (exec_arg1[0]?(exec_PC + exec_simmed24):(fetch_PC + 1)):
                          (exec_arg1[0]?(exec_arg2):(fetch_PC + 1));
+
+   reg [4:0]   mem_sd_class;
+   wire [4:0]  mem_sd_class_next;
+
+   assign mem_sd_class_next[0] = exec_typei;
+   assign mem_sd_class_next[1] = exec_ext_hasout;
+   assign mem_sd_class_next[2] = (exec_typem&(exec_opcode_typeM==3));
+   assign mem_sd_class_next[3] = exec_typea & (exec_opcode_typeA == OPC_ADD);
+   assign mem_sd_class_next[4] = exec_typem && (exec_opcode_typeM == 0); // LOAD
+
    
 `ifdef ENABLE_EXT
  `include "c2_custom_hoist.v"
@@ -639,7 +660,10 @@ module cpu(input clk,
         mem_out_s1_r <= 0;
         mem_Instr <= 0;
         mem_PC <= 0;
-
+        
+        mem_typee <= 0; mem_typei <= 0; mem_typem <= 0; mem_typea <= 0;
+        mem_sd_class <= 0;
+        
         exec_ram_addr_b <= 0;
         exec_ram_data_out_b <= 0;
         exec_ram_we_out <= 0;
@@ -662,6 +686,12 @@ module cpu(input clk,
         
         mem_Instr <= stall?mem_Instr:exec_Instr;
         mem_PC <= stall?mem_PC:exec_PC;
+
+        mem_typee <= stall?mem_typee:exec_typee;
+        mem_typei <= stall?mem_typei:exec_typei;
+        mem_typem <= stall?mem_typem:exec_typem;
+        mem_typea <= stall?mem_typea:exec_typea;
+        mem_sd_class <= stall?mem_sd_class:mem_sd_class_next;
 
         // 
         exec_ram_addr_b <= exec_ram_addr_b_next;
@@ -717,34 +747,15 @@ module cpu(input clk,
    wire [31:0] mem_out_simple_next;
 
    
-   wire        mem_typei;
    wire        mem_ext_hasout;
-   wire        mem_typee;
-   wire        mem_typem;
-   wire        mem_typea;
-   
-
-   assign mem_typee = mem_Instr[6:0] == 7'b1111000;
    assign mem_ext_hasout = mem_typee;
    
-   assign mem_typei = mem_Instr[1:0] == 2'b10;
-   assign mem_typem = mem_Instr[2:0] == 3'b100;
-
    wire [1:0]  mem_opcode_typeM;
-   
-   assign mem_typea = mem_Instr[2:0] == 0;
    assign mem_opcode_typeM = mem_Instr[4:3];
    wire [3:0]  mem_opcode_typeA;
    
    assign mem_opcode_typeA = mem_Instr[6:3];
    
-   wire [4:0] mem_sd_class;
-   assign mem_sd_class[0] = mem_typei;
-   assign mem_sd_class[1] = mem_ext_hasout;
-   assign mem_sd_class[2] = (mem_typem&(mem_opcode_typeM==3));
-   assign mem_sd_class[3] = mem_typea & (mem_opcode_typeA == OPC_ADD);
-   assign mem_sd_class[4] = mem_typem && (mem_opcode_typeM == 0); // LOAD
-
    wire [31:0] mem_ram_input;
 
 

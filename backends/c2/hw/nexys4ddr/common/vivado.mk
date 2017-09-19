@@ -115,6 +115,24 @@ distclean: clean
 	echo "set_property steps.post_route_phys_opt_design.args.directive Default [get_runs impl_1]" >> run_impl.tcl
 	echo "launch_runs impl_1" >> run_impl.tcl
 	echo "wait_on_run impl_1" >> run_impl.tcl
+	echo "set WNS [get_property STATS.WNS [get_runs impl_1]]" >> run_impl.tcl
+	echo "set TNS [get_property STATS.TNS [get_runs impl_1]]" >> run_impl.tcl
+	echo "set WHS [get_property STATS.WHS [get_runs impl_1]]" >> run_impl.tcl
+	echo "set THS [get_property STATS.THS [get_runs impl_1]]" >> run_impl.tcl
+	echo "set TPWS [get_property STATS.TPWS [get_runs impl_1]]" >> run_impl.tcl
+	echo "set FAILED_NETS [get_property STATS.FAILED_NETS [get_runs impl_1]]" >> run_impl.tcl
+
+	echo "if { \$${WNS}<0.0 || \$${TNS}<0.0 || \$${WHS}<0.0 || \$${THS}<0.0 || \$${TPWS}<0.0 || \$${FAILED_NETS}>0.0 } {" >> run_impl.tcl
+	echo "set chan [open timing_failed.log a]" >> run_impl.tcl
+	echo "   puts $$chan \"===TIMING-FAILED-MARKER====\"" >> run_impl.tcl
+	echo "   puts $$chan \"Timing fail, WNS=\$${WNS}\"" >> run_impl.tcl
+	echo "   puts $$chan \"             TNS=\$${TNS}\"" >> run_impl.tcl
+	echo "   puts $$chan \"             WHS=\$${WHS}\"" >> run_impl.tcl
+	echo "   puts $$chan \"             THS=\$${THS}\"" >> run_impl.tcl
+	echo "   puts $$chan \"  Nets: \$${FAILED_NETS}\"" >> run_impl.tcl
+	echo "   puts $$chan \"===TIMING-FAILED-MARKER====\"" >> run_impl.tcl
+	echo "   close $$chan" >> run_impl.tcl
+	echo "}" >> run_impl.tcl
 	echo "exit" >> run_impl.tcl
 	vivado -mode batch -source run_impl.tcl
 
