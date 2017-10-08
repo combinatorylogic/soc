@@ -2,35 +2,19 @@
 
 
    // Generate 25.00MHz
-   wire wegate;
-/*
-   SB_PLL40_CORE #(.FEEDBACK_PATH("SIMPLE"),
-                   .PLLOUT_SELECT("GENCLK"),
-                   .DIVR(0),
-                   .DIVF(7),
-                   .DIVQ(5),
-                   .FILTER_RANGE(3'b101),
-                   ) pll1 (
-                           .REFERENCECLK(sys_clk_in),
-                           .PLLOUTGLOBAL(clk),
-                           .PLLOUTCORE(wegate),
-                           .RESETB(1'b1),
-                           .BYPASS(1'b0)
-                           );
-  */
+
    reg [1:0]    clkdiv;  // divider
    always @(posedge sys_clk_in)
      begin
            case (clkdiv)
-             2'b11: clkdiv <= 2'b10;  // rising edge of clk
-             2'b10: clkdiv <= 2'b00;  // wegate low
-             2'b00: clkdiv <= 2'b01;  // wegate low
+             2'b11: clkdiv <= 2'b10;
+             2'b10: clkdiv <= 2'b00;
+             2'b00: clkdiv <= 2'b01;
              2'b01: clkdiv <= 2'b11;
            endcase
      end
    assign clk = clkdiv[1];
-   assign wegate = clkdiv[0];
-
+   
    // Bi-directional SRAM data pins
    wire [15:0] sram_in;
    wire [15:0] sram_out;
@@ -58,7 +42,7 @@
 
    assign RAMCS_b = 1'b0;
    assign RAMOE_b = !data_we;
-   assign RAMWE_b = (data_we | wegate);
+   assign RAMWE_b = (data_we);
 
    wire [17:0] sram_adr_vga;
    wire [17:0] sram_adr_cpu;
