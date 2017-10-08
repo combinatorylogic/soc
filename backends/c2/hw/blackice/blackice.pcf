@@ -1,0 +1,79 @@
+
+# Onboard 100MHz oscillator
+set_io sys_clk_in 129
+
+set_io sys_reset  64 # SW4?
+# ARM SPI Port
+set_io LED1   71 # also LED1
+set_io LED2   67 # also LED2
+set_io LED3   68 # also LED3
+set_io LED4   70 # also LED4
+
+
+# VGA Output - Matches Digilent PmodVGA plugged into PMOD7/8/9/10
+set_io red[3]     15 # PMOD35 = PMOD 9/10 pin  5
+set_io red[2]     16 # PMOD34 = PMOD 9/10 pin  7
+set_io red[1]     19 # PMOD33 = PMOD 9/10 pin  9
+set_io red[0]     20 # PMOD32 = PMOD 9/10 pin 11
+
+set_io green[3]    1 # PMOD27 = PMOD  7/8 pin  5
+set_io green[2]    2 # PMOD26 = PMOD  7/8 pin  7
+set_io green[1]    9 # PMOD25 = PMOD  7/8 pin  9
+set_io green[0]   10 # PMOD24 = PMOD  7/8 pin 11
+
+set_io blue[3]    11 # PMOD39 = PMOD 9/10 pin  6
+set_io blue[2]    12 # PMOD38 = PMOD 9/10 pin  8
+set_io blue[1]    17 # PMOD37 = PMOD 9/10 pin 10
+set_io blue[0]    18 # PMOD36 = PMOD 9/10 pin 12
+
+set_io hsync       8 # PMOD28 = PMOD  7/8 pin 12
+set_io vsync       7 # PMOD29 = PMOD  7/8 pin 10
+
+
+set_io TX  85
+set_io RX  88
+
+
+# SRAM
+set_io ADR[0] 137
+set_io ADR[1] 138
+set_io ADR[2] 139
+set_io ADR[3] 141
+set_io ADR[4] 142
+set_io ADR[5] 42
+set_io ADR[6] 43
+set_io ADR[7] 44
+set_io ADR[8] 73
+set_io ADR[9] 74
+set_io ADR[10] 75
+set_io ADR[11] 76
+set_io ADR[12] 115
+set_io ADR[13] 116
+set_io ADR[14] 117
+set_io ADR[15] 118
+set_io ADR[16] 119
+set_io ADR[17] 78
+
+
+
+set_io DAT[0] 135
+set_io DAT[1] 134
+set_io DAT[2] 130
+set_io DAT[3] 128
+set_io DAT[4] 125
+set_io DAT[5] 124
+set_io DAT[6] 122
+set_io DAT[7] 121
+set_io DAT[8] 61
+set_io DAT[9] 60
+set_io DAT[10] 56
+set_io DAT[11] 55
+set_io DAT[12] 52
+set_io DAT[13] 49
+set_io DAT[14] 48
+set_io DAT[15] 47
+
+set_io RAMOE_b 45
+set_io RAMWE_b 120
+set_io RAMCS_b 136
+

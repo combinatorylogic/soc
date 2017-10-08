@@ -25,6 +25,7 @@ int32 mand(int32 cx, int32 cy)
 
 void bootentry()
 {
+  int32 clk0 = *((int32*)65542); 
   int32 y;
   int32 x;
   int32 dy = (.f 4.0) / 100;
@@ -43,5 +44,9 @@ void bootentry()
     }
     _printchr(10);_printchr(13);
   }
+  int32 clk1 = *((int32*)65542);
+  _printchr('>'); _printchr('>');
+  _printchr('>'); _printchr(' ');
+  _printnum((clk1 - clk0) / 1000); _printchr(13); _printchr(10);
   _testhalt();
 }

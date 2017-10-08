@@ -1,5 +1,4 @@
 #include "./runtime_common.c"
-#include "./runtime_extra.c"
 
 inline uint32 _SHR(uint32 a, uint32 b) {
   uint32 i = b;
@@ -29,9 +28,7 @@ inline int32 _SHL(int32 a, int32 b) {
 }
 
 // Russian peasant multiplication
-/*
-__hls
-void _HW_ICE_IMUL(int32 a0, int32 b0, int32 *ret)
+int32 _IMUL(int32 a0, int32 b0)
 {
   int32 a = a0;
   int32 b = b0;
@@ -42,37 +39,11 @@ void _HW_ICE_IMUL(int32 a0, int32 b0, int32 *ret)
     a >>= 1;
     b <<= 1;
   } while (a > 0);
-  *ret = c;
-  }*/
-
-inline int32 _IMUL(int32 a0, int32 b0)
-{/*
-        int32 ret;
-        _HW_ICE_IMUL(a0,b0,&ret);
-        return ret;
- */
-        inline verilog usemodule "./slowMul.v";
-        inline verilog instance slowMul(ack = mul_ack,
-                                        p0  = reg mul_p0,
-                                        p1  = reg mul_p1,
-                                        req = reg mul_req,
-                                        out = mul_out);
-        inline verilog reset {
-                mul_req <= 0;
-                mul_p0 <= 0;
-                mul_p1 <= 0;
-        };
-        inline verilog exec(a0, b0) {
-                mul_p0 <= a0;
-                mul_p1 <= b0;
-                mul_req <= 1;
-        } wait (mul_ack) {
-                mul_req <= 0;
-                } else { mul_req <= 0; };
-        return inline verilog exec {} return ( mul_out );
+  return c;
 }
 
-__hls void HW_IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod, int32 *Ret)
+// Integer division
+int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
 {
   int32 nQuotient = 0;
   int32 nPos = -1;
@@ -102,15 +73,7 @@ __hls void HW_IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod, int32 *Ret)
     ullDividend = 0; nQuotient++;
   }
   *Mod = ullDividend;
-  *Ret = nQuotient;
-}
-
-// Integer division
-inline int32 _IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod)
-{
-        int32 ret;
-        HW_IDIVMOD(nDividend, nDivisor, Mod, &ret);
-        return ret;
+  return nQuotient;
 }
 
 inline int32 _IUDIV(int32 a, int32 b)
@@ -119,7 +82,7 @@ inline int32 _IUDIV(int32 a, int32 b)
   return _IDIVMOD(a, b, &rem);
 }
 
-inline  int32 _ISDIV(int32 a, int32 b)
+ int32 _ISDIV(int32 a, int32 b)
 {
   uint32 rem;
   return _IDIVMOD(a, b, &rem);
@@ -139,3 +102,28 @@ inline int32 _ISREM(int32 a, int32 b)
   return rem;
 }
 
+
+
+inline int32 _SLT(int32 l, int32 r) {
+  return (l-r)&0x80000000; // is l-r negative?
+}
+
+inline int32 _ULT(int32 l, int32 r) {
+  return (l-r)&0x80000000; // is l-r negative?
+}
+
+inline int32 _SLE(int32 l, int32 r) {
+  return (l-r)&0x80000000; // is l-r negative?
+}
+
+inline int32 _ULE(int32 l, int32 r) {
+  return (l-r)&0x80000000; // is l-r negative?
+}
+
+inline int32 _SGT(int32 l, int32 r) {
+  return (r-l)&0x80000000; // is l-r negative?
+}
+
+inline int32 _SGE(int32 l, int32 r) {
+  return l==r || (r-l)&0x80000000; // is l-r negative?
+}

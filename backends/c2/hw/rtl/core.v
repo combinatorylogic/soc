@@ -1,5 +1,14 @@
 `timescale 1 ns / 1 ps
 
+`define STR(a) `"a`"
+
+`ifndef CPUNAME
+ `define CPUPREFIX .
+ `define CPUNAME cpu
+`endif
+
+`define IPATH(a) `include `STR(`CPUPREFIX/a)
+
 `include "defines.v"
 
 // This core is somewhat more complex than it should have been, because on ICE40 BRAMs are
@@ -82,7 +91,7 @@
  */
 
 `ifdef ENABLE_EXT
- `include "c2_custom_include.v"
+ `IPATH(c2_custom_include.v)
 `endif
 
 
@@ -93,7 +102,8 @@
 /////////////////////////
 
 
-module cpu(input clk,
+module `CPUNAME 
+          (input clk,
            input         rst,
 
            input [31:0]  ram_data_in_a,
@@ -105,7 +115,7 @@ module cpu(input clk,
 
            /**************************/
            // TODO: also include hoisted external signals
-           `include "soccpusignals.v"
+           `IPATH(soccpusignals.v)
            /**************************/
 
            input         stall_cpu // external stall
@@ -637,7 +647,7 @@ module cpu(input clk,
 
    
 `ifdef ENABLE_EXT
- `include "c2_custom_hoist.v"
+   `IPATH(c2_custom_hoist.v)
 `endif
 
    reg [3:0]   sfsm_state;
@@ -676,7 +686,7 @@ module cpu(input clk,
         
               
 `ifdef ENABLE_EXT
- `include "c2_custom_reset.v"
+        `IPATH(c2_custom_reset.v)
 `endif
         
      end else begin
@@ -713,7 +723,7 @@ module cpu(input clk,
         end
 
 `ifdef ENABLE_EXT
-        `include "c2_custom_pipeline.v"
+        `IPATH(c2_custom_pipeline.v)
 `endif
 
         // Ext. FSM for the multi-cycle instructions (i.e., those with a wait stage)
@@ -733,7 +743,7 @@ module cpu(input clk,
             end
           S_WAIT:
             begin
-               `include "c2_custom_wait.v"
+               `IPATH(c2_custom_wait.v)
             end
         endcase
 `endif
@@ -841,7 +851,7 @@ module cpu(input clk,
      end // else: !if(~rst)
 
    //------------------------------------------------
-   //--6.1. WB logic---------------------------------
+   //--7. WB logic-----------------------------------
    //------------------------------------------------
 
    reg [31:0] wb_out;
@@ -875,7 +885,7 @@ module cpu(input clk,
      end
    
    //------------------------------------------------
-   //--7. Reg file instance--------------------------
+   //--8. Reg file instance--------------------------
    //------------------------------------------------
 
    // Address values for the reg file are formed in the DECODE0 stage (or after DECODE0 stage if
@@ -923,7 +933,7 @@ module cpu(input clk,
       );
 
    //------------------------------------------------
-   //-- 8. Debugging output--------------------------
+   //-- 9. Debugging output--------------------------
    //------------------------------------------------
 
    

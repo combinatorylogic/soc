@@ -84,6 +84,22 @@ Besides elaborating the GEPs we're also fusing alloca references here, introduci
 value \verb|*FP*|.
 
 \pfcode{
+function c2_tidy_geps(src) {
+  counter = mkhash();
+  visit:ir2 (irtoplevel: src) {
+     deep irval {
+        var -> ohashput(counter, nm, nm)
+      | else -> []}};
+  visit:ir2 (irtoplevel: src) {
+     deep irbblock {
+       bblock -> mk:node(c = map append c in c do c)};
+     deep irpair: e(nm);
+     deep irexpr(dstnm) {
+       getelementptr -> if (ohashget(counter, dstnm)) [[dstnm; node]] else []
+     | else -> [[dstnm; node]]
+     }}}}
+
+\pfcode{
 function c2_gep_elaboration(src) {
   // 1. Cache the definitions
   vht = mkhash(); alloca_offsets = mkhash();
@@ -205,7 +221,7 @@ function c2_gep_elaboration(src) {
 
   // 3. A cleanup pass - remove the unused GEPs, in case they were killed by the previous pass
   // TODO!
-  src_clean = src_fused;
+  src_clean = c2_tidy_geps(src_fused);
 
   // 4. Convert all the remaining GEPs into sequences of arithmetic instructions
   renamesht = mkhash();
@@ -927,6 +943,38 @@ function c2_fix_labels(src) {
         | rel -> aif(chk = ohashget(labels, id)) mk:node(id=chk) else node
         | else -> node}}}}
 
+We'll unavoidably have a lot of redundant jumps and labels, let's remove them:
+
+\pfcode{
+function c2_cleanup_trivial(src) {
+   prev = mkref([]); prevlbl = mkref('*none*');
+   getlabel(e) =
+      visit:c2asm(expr: e) {
+        once expr {
+           label -> id
+         | rel -> id
+         | else -> '*none*'}};
+   // We rely on a fact that jmpr is always followed by a label.
+   ret = map append s in src do 
+     visit:c2asm(entry: s) {
+       deep entry {
+           label ->
+               if (^prevlbl === lbl) [node] else {
+                   if (^prev) {
+                     xprev = ^prev; prev := []; prevlbl := '*none*';
+                     [xprev; node]
+                   } else { [node] }}
+         | i -> i(p)
+         | else -> { prev := []; prevlbl := '*none*'; [node]}};
+       deep instr(ipos) {
+           jmpr -> {prevlbl := getlabel(lbl); prev := 'i'(node,@ipos); []}
+         | else -> {
+              prevlbl := '*none*'; prev := [];
+              ['i'(node,@ipos)]}}};
+   if (^prev) {
+     ret :: [^prev]
+   } else ret}}
+
 We will infer dependency rules from each instruction, and then reorder the
 instructions or insert nops depending on these rules.
 
@@ -1030,7 +1078,8 @@ function c2_driver(src) {
    t6 = c2_spills(t5);
    t7 = c2_lower_macros(t6);
    t8 = c2_fix_labels(c2_flatten(t7));
-   t9 = c2_schedule(t8);
+   t8x = c2_cleanup_trivial(t8);
+   t9 = c2_schedule(t8x);
    return t9;
 }}
 
@@ -1058,23 +1107,24 @@ function c2_optimise_again(mdl) {
 \phcode{include "./verilog.hl"}
 
 \pfcode{
-function c2_emit_data(e) {
+function c2_emit_data(e) 
    visit:ir2 (irtoplevel: e) {
      deep irval {
-        array -> elts
-      | integer -> 'const'(v)
-      | zero -> 'const'(0)
+        array -> map append e in elts do e
+      | integer -> ['const'(v)]
+      | zero -> ['const'(0)]
       | else -> ccerror('todo'(node))};
      deep irtoplevel {
         global ->
           ['label'(name); // TODO: prefix?
-           'data'(v)]
-      | else -> ccerror('IMPOSSIBLE'())}}}}
+           'data'(@v)]
+      | else -> ccerror('IMPOSSIBLE'())}}}
 
 
 \pfcode{
-function c2_driver_mdl(mdl, fnm)
+function c2_driver_mdl(mdl0, fnm)
 collector(vladd, vlget) {
+   mdl = c2_lift_strings(mdl0);
    envtypes = ll_propagate_types(mdl);
    mdl_pre = hoist_inlined_verilog(vladd, mdl, ['exec_arg2';'exec_arg1'], fun(iid, icrc) iid);
   <[env;types]> = envtypes;

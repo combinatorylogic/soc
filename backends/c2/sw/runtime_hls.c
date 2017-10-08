@@ -27,7 +27,7 @@ inline int32 _SHL(int32 a, int32 b) {
   } while(i>0);
   return r;
 }
-
+/*
 __hls void _HLS_IMUL(int32 a0, int32 b0, int32 *ret) {
         *ret = a0*b0;
 }
@@ -38,6 +38,32 @@ inline int32 _IMUL(int32 a0, int32 b0)
         _HLS_IMUL(a0,b0,&ret);
         return ret;
 }
+*/
+
+
+int32 _IMUL(int32 a0, int32 b0)
+{
+        inline verilog usemodule "./slowMul.v";
+        inline verilog instance slowMul(ack = mul_ack,
+                                        p0  = reg mul_p0,
+                                        p1  = reg mul_p1,
+                                        req = reg mul_req,
+                                        out = mul_out);
+        inline verilog reset {
+                mul_req <= 0;
+                mul_p0 <= 0;
+                mul_p1 <= 0;
+        };
+        inline verilog exec(a0, b0) {
+                mul_p0 <= a0;
+                mul_p1 <= b0;
+                mul_req <= 1;
+        } wait (mul_ack) {
+                mul_req <= 0;
+                } else { mul_req <= 0; };
+        return inline verilog exec {} return ( mul_out );
+}
+
 
 
 __hls void HW_IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod, int32 *Ret)

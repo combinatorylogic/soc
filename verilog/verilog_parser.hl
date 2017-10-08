@@ -611,17 +611,17 @@ parser verilog (veriloglex) {
       / [primary]
       ;
 
-   unaryOperator := [unaryOperatorTk]:v => $sval(v);
-   BinaryOperator10 := [BinaryOperatorTk10]:v => $sval(v);
-   BinaryOperator9 := [BinaryOperatorTk9]:v => $sval(v);
-   BinaryOperator8 := [BinaryOperatorTk8]:v => $sval(v);
-   BinaryOperator7 := [BinaryOperatorTk7]:v => $sval(v);
-   BinaryOperator6 := [BinaryOperatorTk6]:v => $sval(v);
-   BinaryOperator5 := [BinaryOperatorTk5]:v => $sval(v);
-   BinaryOperator4 := [BinaryOperatorTk4]:v => $sval(v);
-   BinaryOperator3 := [BinaryOperatorTk3]:v => $sval(v);
-   BinaryOperator2 := [BinaryOperatorTk2]:v => $sval(v);
-   BinaryOperator1 := [BinaryOperatorTk1]:v => $sval(v);
+   unaryOperator := [unaryOperatorTk]:v => {ctoken = lexic} $sval(v);
+   BinaryOperator10 := [BinaryOperatorTk10]:v => {ctoken = lexic} $sval(v);
+   BinaryOperator9 := [BinaryOperatorTk9]:v => {ctoken = lexic} $sval(v);
+   BinaryOperator8 := [BinaryOperatorTk8]:v => {ctoken = lexic} $sval(v);
+   BinaryOperator7 := [BinaryOperatorTk7]:v => {ctoken = lexic} $sval(v);
+   BinaryOperator6 := [BinaryOperatorTk6]:v => {ctoken = lexic} $sval(v);
+   BinaryOperator5 := [BinaryOperatorTk5]:v => {ctoken = lexic} $sval(v);
+   BinaryOperator4 := [BinaryOperatorTk4]:v => {ctoken = lexic} $sval(v);
+   BinaryOperator3 := [BinaryOperatorTk3]:v => {ctoken = lexic} $sval(v);
+   BinaryOperator2 := [BinaryOperatorTk2]:v => {ctoken = lexic} $sval(v);
+   BinaryOperator1 := [BinaryOperatorTk1]:v => {ctoken = lexic} $sval(v);
    string := [stringTk]:v => $val(v);
 
    primary := { [identifier]:nm "[" [constantExpression]:l ":" [constantExpression]:r "]" => idx2(nm,l,r) }

@@ -31,3 +31,9 @@ inline void _leds(int32 n)
         int32 *channel = (int32*)(65540);
         *channel = n;
 }
+
+
+inline uint32 _clockcnt()
+{
+        return *((uint32*)65542);
+}

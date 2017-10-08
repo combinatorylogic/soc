@@ -88,3 +88,29 @@ void _printnum(int32 n)
         }
 }
 
+
+void putc(int32 c)
+{
+        uint32 *uart_ready = (uint32*)(65538);
+        uint32 *uart_out = (uint32*)(65539);
+        while(! *uart_ready) ;
+        *uart_out = c;
+}
+      
+
+void print(int32 *str)
+{
+        for (int i = 0; str[i]; i++) putc(str[i]);
+}
+
+void printnum(int32 n)
+{
+        int32 buf[16];
+        itoa(n, buf);
+        print(buf);
+}
+
+void newline()
+{
+        putc(10); putc(13);
+}

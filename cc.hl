@@ -99,6 +99,12 @@ collector(fadd,fget) {
     | ["/imul";@rest] -> {cmdline_imul := true; loop(rest)}
     | ["/noimul";@rest] -> {cmdline_imul := []; loop(rest)}
     | ["/c2ram";n;@rest] -> {c2_ram_end := %S->N(n); loop(rest)}
+    | ["/c2muops";@rest] -> {c2_enable_muops := true; loop(rest)}
+    | ["/c2muops-";@rest] -> {c2_enable_muops := []; loop(rest)}
+    | ["/c2barrel";@rest] -> {c2_enable_barrel := true; loop(rest)}
+    | ["/c2barrel-";@rest] -> {c2_enable_barrel := []; loop(rest)}
+    | ["/c2cmpops";@rest] -> {c2_enable_cmp := true; loop(rest)}
+    | ["/c2cmpops-";@rest] -> {c2_enable_cmp := []; loop(rest)}
     | ["/d";dllname;@rest] -> {%read-compile-eval('usedll'(%Sm<<(dllname)));
                                loop(rest);}
     | ["/o+";@rest] -> { %llvm-optimise := true; loop(rest)}
@@ -117,8 +123,8 @@ collector(fadd,fget) {
                 "Options:";
                 "   /out <modulename>   : save bitcode to a given module";
                 "   /arch small1|c2     : select target CPU";
-                "   /imul               : enable IMUL and the other extended instructions";
-                "   /noimul             : disable IMUL and the other extended instructions";
+                "   /imul               : enable IMUL and the other extended instructions (Small1)";
+                "   /noimul             : disable IMUL and the other extended instructions (Small1)";
                 "   /d   <dllname>      : load a given MBase dll";
                 "   /s   <srcfile>      : load a given PFront source file";
                 "   /a   <srcfile>      : load a given MBase source file";
@@ -126,6 +132,10 @@ collector(fadd,fget) {
                 "   /i                  : save an output in an intermediate format";
                 "   /o+                 : enable optimisation";
                 "   /o-                 : disable optimisation";
+                "   /c2ram <number>     : size of C2 SoC RAM";
+                "   /c2muops            : enable C2 muops";
+                "   /c2barrel           : enable C2 barrel shifter";
+                "   /c2cmpops           : enable C2 cmpops";
                 "   /dbg <level>        : enable debugging output (1-8)"]);
          quit();
        } 

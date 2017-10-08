@@ -65,7 +65,7 @@ inline void _vmemdirect(uint32 pos)
                 vmem_select <= 1;
                 vmem_we <= 1;
                 vmem_in_addr <= vmemrowpos;
-                vmem_in_data <= {4'b1111, bytes4[4*9*4-1-4:(4 * 9 * 4 - 8)]}; //bytes4[(4 * 9 * 4 - 1):(4 * 9 * 4 - 8)];
+                vmem_in_data <= bytes4[(4 * 9 * 4 - 1):(4 * 9 * 4 - 8)];
                 bytes4 <= {bytes4[(4*9*4-8):0],8'b0};
                 vmembcount <= 17;
                } wait(vmembcount == 0 || rowbcount == (80*4)) {
@@ -221,15 +221,15 @@ void bootentry()
         int32 cntr = 0;
         _vmemcls();
  loopZ:
-        int32 clk0 = *((int32*)65542); 
+        uint32 clk0 = _clockcnt();
 	mand36(zoom, dstX, dstY, dstW, dstH, N);
         _leds(cntr++);
         zoom+=dz;
         if (zoom >= (N-5)) dz = -1;
         else if (zoom < 1) dz = 1;
         // Ignored on an FPGA, terminates in Verilator
-        int32 clk1 = *((int32*)65542);
-        _printnum((clk1 - clk0) / 1000); _printchr(13); _printchr(10);
+        uint32 clk1 = _clockcnt();
+        //        _printnum((clk1 - clk0) / 1000); _printchr(13); _printchr(10);
         _vmemdump();
         _testhalt();
         // Avoid a VGA flicker and tearing

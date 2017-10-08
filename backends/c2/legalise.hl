@@ -6,8 +6,23 @@
 \pfcode{
 define c2_enable_mul = mkref([])
 define c2_enable_cmp = mkref(true)
-define c2_enable_barrel = mkref([])
+define c2_enable_barrel = mkref(true)
 }
+
+\pfcode{
+function c2_lift_strings(mdl)
+collector(add, get) {
+   ret = visit:ir2(irmodule: mdl) {
+     deep irexpr {
+        string ->
+           symbols (gnm) {
+             data = (map c in %string->list(s) do 'integer'(ascii(c)))::['integer'(0)];
+             atype = 'array'([length(data)], 'integer'('i32'));
+             add('global'(gnm, atype,
+                               'array'(atype, @data)));
+             return 'getelementptr'('global'(gnm), ['integer'(0)])}
+     |  else -> node}};
+    return get() :: ret}}
 
 \pfcode{
 %"ir2 -> ir2"
