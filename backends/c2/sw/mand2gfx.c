@@ -23,12 +23,12 @@ void mand_core(int32 cx, int32 cxstep, int32 cy, int.4 *counters)
   ::pragma hls_pipeline_loop(cx, cxstep, counters);
 
 
-  int32 i;
+  int.8 i;
   int32 vx = 0;
   int32 vy = 0;
   int32 dvx = 0; int32 dvy = 0;
   int32 cnd = 1;
-  for (i = -1; (i < 99) & cnd; i++) {
+  for (i = (int.8)(-1); (i < (int.8)99) & cnd; i++) {
     int32 vx1 = dvx - dvy + cx;
     int32 vy1 = ((vx * vy)>> (.wf - 1)) + cy;
     vx = vx1; vy = vy1;
@@ -82,8 +82,6 @@ inline void _vmemdirect(uint32 pos)
                         vmembcount <= vmembcount - 1;
                };
 }
-
-// shit: 98, 207
 
 inline
 void mand36(int32 zoom, int32 dstX, int32 dstY, int32 dstW, int32 dstH, int32 N)

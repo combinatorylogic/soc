@@ -139,18 +139,19 @@ basic blocks. Memory loads are believed to always have one cycle latency - to be
 long waiting.
 
 \pfcode{
-function ll_to_hls_bb_splitops(aenv, bb) 
+function ll_to_hls_bb_splitops(devenv, aenv, bb, pipelined) 
    visit:ir2mem (irbblock:bb) {
       deep irexpr(dst) {
          mload -> symbols(dst1) {
             [[dst1; 'mload_start'(mem, dst1, offset)];
              [dst; 'mload_commit'(mem, dst1, 'var'(dst1))]]}
        | binary -> {
-           if(op == 'Mul')
-            symbols(dst1) {
-              [[dst1; 'op_start'('Mul', dst1, [l;r], 4, dst)];
-               [dst;  'op_commit'('Mul', dst1, 'var'(dst1), 4)]]
-            } else [[dst;node]]}
+           opdesc = ohashget(devenv, %Sm<<('binop-', op, if(pipelined) '-pipe' else ""));
+           if (opdesc) symbols(dst1) {
+             <[opname;delay]> = opdesc;
+              [[dst1; 'op_start'(opname, dst1, [l;r], delay, dst)];
+               [dst;  'op_commit'(opname, dst1, 'var'(dst1), delay)]]}
+           else [[dst; node]]}
        | else -> [[dst;node]]};
       deep irpair: e(nm);
       deep irbblock {

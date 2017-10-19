@@ -149,6 +149,11 @@ endmodule
 
 // TODO:
 // implement a 2-port RAM by using a double clock frequency + a single port
+`define STR(a) `"a`"
+`ifndef C2_RAM_DEPTH
+ `define C2_RAM_DEPTH 1024
+`endif
+
 module socram(input clk,
               input             rst,
 
@@ -161,12 +166,8 @@ module socram(input clk,
               input [31:0]      data_b_in,
               input [31:0]      data_b_we);
 
-   parameter RAM_DEPTH = 1024;
-`ifdef ENABLE_EXT
-   parameter INIT_FILE = "../../custom_ice.hex";
-`else
-   parameter INIT_FILE = "ram.hex";
-`endif
+   parameter RAM_DEPTH = `C2_RAM_DEPTH;
+   parameter INIT_FILE = `STR(`INIT_FILE_PATH);
    
    reg [31:0]                   mem [0:RAM_DEPTH-1];
    
@@ -196,6 +197,7 @@ module mul16x16 (input [15:0]      a,
    
 endmodule // mul16x16
 
+
 module hls_Mul(input clk,
                input reset,
 
@@ -224,14 +226,36 @@ module hls_Mul(input clk,
    always @(posedge clk)
      begin
         p0r <= p0; p1r <= p1;
-        t1 <= bd + {bc[15:0], 16'b0}; adr <= ad;
+        t1 <= bd + {bc[15:0], 16'b0}; adr <= ad[15:0];
         t2 <= t1 + {adr[15:0], 16'b0};
      end
    
    
-endmodule
+endmodule // hls_Mul
 
 
+
+`include "../rtl/mul.v"
+
+
+module hls_MulFSM(input clk,
+                  input         reset,
+                  input         req,
+                  output        ack,
+                  
+                  input [31:0]  p0,
+                  input [31:0]  p1,
+                  output [31:0] out);
+
+    mul32x32_fsm S(.clk(clk),
+                   .rst(reset),
+                   .req(req),
+                   .ack(ack),
+                   .p0(p0),
+                   .p1(p1),
+                   .out(out));
+
+endmodule // hls_MulFSM
 
 `include "vgafifo.v"
 `include "vga640x480ice.v"

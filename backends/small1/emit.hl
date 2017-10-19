@@ -5,6 +5,7 @@
 \pfcode{
 include "./asm.hl"
 include "./legalise.hl"
+include "./verilog.hl"
 }
 
 \subsection{Generic stack--machine lowering}

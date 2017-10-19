@@ -708,6 +708,7 @@ module `CPUNAME
         exec_ram_data_out_b <= exec_ram_data_out_b_next;
         exec_ram_we_out <= exec_ram_we_out_next;
 
+`ifndef DISABLE_MEMQUEUE
         if (~stall) begin
            mem_queue_addr_1 <=  exec_ram_addr_b;
            mem_queue_we_1   <=  exec_ram_we_out;
@@ -720,7 +721,8 @@ module `CPUNAME
            mem_queue_addr_3 <=  mem_queue_addr_2;
            mem_queue_we_3   <=  mem_queue_we_2;
            mem_queue_data_3 <=  mem_queue_data_2;
-        end
+        end // if (~stall)
+`endif
 
 `ifdef ENABLE_EXT
         `IPATH(c2_custom_pipeline.v)
@@ -768,10 +770,13 @@ module `CPUNAME
    
    wire [31:0] mem_ram_input;
 
-
+`ifndef DISABLE_MEMQUEUE
    assign mem_ram_input = ((mem_queue_addr_0 == mem_queue_addr_1)&mem_queue_we_1)?mem_queue_data_1:
                           ((mem_queue_addr_0 == mem_queue_addr_2)&mem_queue_we_2)?mem_queue_data_2:
                           ((mem_queue_addr_0 == mem_queue_addr_3)&mem_queue_we_3)?mem_queue_data_3:ram_data_in_b;
+`else
+   assign mem_ram_input = ram_data_in_b;
+`endif
    
 
    // Selecting the right EXEC / RAM output
@@ -859,9 +864,13 @@ module `CPUNAME
    reg [4:0]  wb_out_reg;
 
    wire [31:0] wb_ram_input;
+`ifndef DISABLE_MEMQUEUE
    assign wb_ram_input = ((mem_queue_addr_0 == mem_queue_addr_1)&mem_queue_we_1)?mem_queue_data_1:
                          ((mem_queue_addr_0 == mem_queue_addr_2)&mem_queue_we_2)?mem_queue_data_2:
                          ((mem_queue_addr_0 == mem_queue_addr_3)&mem_queue_we_3)?mem_queue_data_3:ram_data_in_b;
+`else
+   assign wb_ram_input = ram_data_in_b;
+`endif
    wire [31:0] wb_out_next;
    wire        wb_out_we_next;
    

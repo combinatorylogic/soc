@@ -103,13 +103,17 @@ function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee) {
            // Increment thread counter, threadId, live count
            inccounter = { // Thread counter just cycles in 1 .. N continuously
               nextnm = %Sm<<(thrcount, "_next");
-              addentry(mk:modentry:register(mk:v(32), thrcount));
-              addentry(mk:modentry:wire(mk:v(32), nextnm));
+              addentry(mk:modentry:register(mk:v(depth), thrcount));
+              addentry(mk:modentry:wire(mk:v(depth), nextnm));
               addentry(mk:modentry:assign(nextnm,
                  mk:e(
-                   mk:select(mk:e(mk:op('SLT', [mk:reg(thrcount); mk:const(depth, mk:v(32))], mk:v(32))),
-                      mk:e(mk:op('Add', [mk:reg(thrcount); mk:const(1, mk:v(32))], mk:v(32))),
-                      mk:const(1, mk:v(32))))));
+                   mk:op('compose',[mk:e(mk:op('range', [mk:reg(thrcount);
+                                                         mk:const(depth-2,mk:v(32));
+                                                         mk:const(0,mk:v(32))], mk:v(depth-1)));
+                                    mk:e(mk:op('range', [mk:reg(thrcount);
+                                                         mk:const(depth-1,mk:v(32));
+                                                         mk:const(depth-1,mk:v(32))], mk:v(1)))],
+                                    mk:v(depth)))));
               [mk:stmt:set(thrcount, mk:v(mk:reg(nextnm)))]};
            incthrid = { // ThrId increments the same way as with the simple pipeline. TODO: TYPE!!!
               idname = getreg(thrid);
@@ -118,18 +122,31 @@ function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee) {
               addentry(mk:modentry:wire(mk:v(32), nextnm));
               addentry(mk:modentry:assign(nextnm,
                  mk:e(
-                   mk:select(mk:e(mk:op('SLT', [mk:reg(thrcount); mk:const(depth, mk:v(32))], mk:v(32))),
+                   mk:select(mk:e(mk:op('NOT', [
+                                     mk:e(mk:op('range', [
+                                        mk:reg(thrcount);
+                                        mk:const(depth-1, mk:v(32));
+                                        mk:const(depth-1, mk:v(32))
+                                     ], mk:v(1)))], mk:v(1))),
                       mk:e(mk:op('Add', [mk:reg(idname); step], mk:v(32))),
                       thrinit))));
               [mk:stmt:set(idname, mk:v(mk:reg(nextnm)))]};
            inclive = { // Live counter contains a number of threads issued/reissued at this iteration
               nextnm = %Sm<<(livecnt, "_next");
-              addentry(mk:modentry:register(mk:v(32), livecnt));
-              addentry(mk:modentry:wire(mk:v(32), nextnm));
+              addentry(mk:modentry:register(mk:v(depth), livecnt));
+              addentry(mk:modentry:wire(mk:v(depth), nextnm));
               addentry(mk:modentry:assign(nextnm,
                  mk:e(
-                   mk:select(mk:e(mk:op('SLT', [mk:reg(thrcount); mk:const(depth, mk:v(32))], mk:v(32))),
-                      mk:e(mk:op('Add', [mk:reg(livecnt); mk:reg(thrlive)], mk:v(32))),
+                   mk:select(mk:e(mk:op('NOT', [
+                                     mk:e(mk:op('range', [
+                                        mk:reg(thrcount);
+                                        mk:const(depth-1, mk:v(32));
+                                        mk:const(depth-1, mk:v(32))
+                                     ], mk:v(1)))], mk:v(1))),
+                      mk:e(mk:op('compose',[mk:e(mk:op('range', [mk:reg(livecnt);
+                                                         mk:const(depth-2,mk:v(32));
+                                                         mk:const(0,mk:v(32))], mk:v(depth-1)));
+                                            mk:reg(thrlive)], mk:v(depth))),
                       mk:const(0, mk:v(32))))));
               [mk:stmt:set(livecnt, mk:v(mk:reg(nextnm)))]};
 
@@ -182,7 +199,11 @@ function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee) {
               // Now, lift the exit condition itself:
               addentry(mk:modentry:wire(mk:v(1), loopexitcnd));
               addentry(mk:modentry:assign(loopexitcnd, exitcnd));
-              [mk:stmt:if(mk:op('EQ',[mk:reg(thrcount);mk:const(depth, mk:v(32))], mk:v(1)),
+              [mk:stmt:if(mk:op('range', [
+                                        mk:reg(thrcount);
+                                        mk:const(depth-1, mk:v(32));
+                                        mk:const(depth-1, mk:v(32))
+                                     ], mk:v(1)),
                           mk:set(isentry, mk:v(mk:const(0, mk:v(1)))),
                           mk:begin([mk:nop()]));
                /*
@@ -191,7 +212,11 @@ function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee) {
                   mk:stmt:display(%S<<("LOOP REG ", nm, ":: %d"), [mk:reg(nm)])
                };*/
                mk:stmt:if(mk:op('And',
-                                 [mk:e(mk:op('EQ',[mk:reg(thrcount);mk:const(depth, mk:v(32))], mk:v(1)));
+                                 [mk:e(mk:op('range', [
+                                        mk:reg(thrcount);
+                                        mk:const(depth-1, mk:v(32));
+                                        mk:const(depth-1, mk:v(32))
+                                     ], mk:v(1)));
                                   mk:e(mk:op('EQ',[mk:reg(livecnt);mk:const(0,mk:v(1))], mk:v(1)))], mk:v(1)),
                           mk:begin([
                                 mk:set(isidle, mk:v(mk:const(1, mk:v(1))));
@@ -238,7 +263,11 @@ function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee) {
                     addentry(mk:modentry:wire(mk:v(w), nm));
                     addentry(mk:modentry:assign(nm,
                       mk:e(
-                        mk:select(mk:e(mk:op('EQ', [mk:reg(thrcount); mk:const(d+1, mk:v(32))], mk:v(1))),
+                        mk:select(mk:e(mk:op('range', [
+                                               mk:reg(thrcount);
+                                               mk:const(d, mk:v(32));
+                                               mk:const(d, mk:v(32))
+                                             ], mk:v(1))),
                                   v,
                                   mk:e(mk:op('range',
                                         [mk:reg(reg);

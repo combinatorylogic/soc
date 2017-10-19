@@ -2,6 +2,78 @@
 
 \subsection{Driver}
 
+\pfcode{
+function ll_to_hls_expand_commits(top) {
+  commits = mkhash();
+  mkcommits() = {
+     add(id, v) = ohashput(commits, id, v:ohashget(commits, id));
+     visit:hls2 /rec/ (top: top) {
+       deep expr {
+         op_commit -> (match cycles with
+                          'd'(@_) -> add(stage, %Sm<<(inst, "_ack")))
+       | else -> []}}};
+  mkcommits();
+  visit:hls2 /rec/ (top: top) {
+    deep fsmstage  {
+         stage ->  {
+            acks = ohashget(commits, name);
+            if (acks) symbols(accnm, accnext) {
+               mk:node(startcnd = [[accnm; accnext; acks]],
+                       body = [
+                          mk:stmt:waitcommits(accnm, accnext, acks, mk:stmt:begin(ss = body))])}
+            else node()}}}}}
+
+\pfcode{
+function ll_to_hls_fill_op_starts(top) {
+  stagestarts = mkhash();
+  mkstagestarts() =
+       visit:hls2 /rec/ (top: top) {
+          deep fsmstage{
+             stage -> ohashput(stagestarts, name, startcnd)}};
+  mkstagestarts();
+  getstagestart(name) =
+    aif(chk = ohashget(stagestarts, name)) car(chk) else [];
+  dofsmstage(thisstage, s) =
+    visit:hls2 /rec/ (fsmstage: s) {
+      deep stmt {
+         op_start  -> (match cycles with
+                        'd'(nc) -> mk:node(cycles = 'd'(nc, getstagestart(thisstage)))
+                       | else -> node())
+      |  else -> node()}};
+  visit:hls2 /rec/ (top: top) {
+     deep fsmstage {
+        stage -> dofsmstage(name, node())}}}}
+
+\pfcode{
+function ll_to_hls_zero_ack_regs(top) {
+  // 1. Build a CFG
+  cfg = mkhash(); cnds = mkhash();
+  dofsmstage(thisstage, s) =
+     visit:hls2 /rec/ (fsmstage: s) {
+        deep stmt {
+           goto -> ohashput(cfg, stage, thisstage) // do not care if more than one incoming edges
+         | else -> []}};
+  fillcfg() = visit:hls2 /rec/ (top: top) {
+     deep fsmstage  { stage -> {
+           if(startcnd) ohashput(cnds, name, car(startcnd));
+           dofsmstage(name, node()) }}};
+  fillcfg();
+  // 2. Inject initialisation
+  cndregs = mkhash();
+  hashiter(fun(to, from)
+            aif(cc = ohashget(cnds, to)) {
+              <[accnm;accnext;acks]> = cc;
+               if (length(acks)>1)
+                  ohashput(cndregs, from, accnm)
+            } else [], cfg);
+  getcndreg(name) = ohashget(cndregs, name);
+  visit:hls2 /rec/ (top: top) {
+     deep  fsmstage {
+        stage -> {
+           aif (cndreg = getcndreg(name)) {
+              // TODO: use a special node, because this register does not exist yet
+              mk:node(body = mk:stmt:set(cndreg, mk:v(mk:const(0, mk:v(32)))):body);
+           }  else node()}}}}}
 
 \pfcode{
 function ll_to_hls_lower_fsm(top) {
@@ -12,6 +84,11 @@ function ll_to_hls_lower_fsm(top) {
              goto -> mk:set(stagereg, mk:v(mk:const(ohashget(ssmap, stage), tp)))
            | load_start -> mk:stmt:load_start_x(stagereg = stagereg, stage=thisstage)
            | store -> mk:stmt:store_x(stagereg = stagereg, stage=thisstage)
+           | op_start -> {
+                match cycles with
+                    'd'(nc, stagestart) ->
+                       mk:node(cycles = 'd'(nc, stagereg, thisstage, stagestart))
+                  | else -> node()}
            | else -> node()}}};
      visit:hls3 /rec/ (case: body) {
         once case {
@@ -187,15 +264,37 @@ function ll_to_hls3_lower_insts(top) {
           | else -> []}};
       return get()};
    insts = getinsts();
+   pow2(b) = notnet(int b) {leave 1<<b;};
+   mkones(num) = with target (hls3) {
+     mk:value:const( pow2( num ) - 1, mk:v(num) )};
+   makestageexpr(stagereg, stage, stagestart) =
+     with target(hls3) {
+         e1 = mk:expr:op('EQ', [mk:reg(stagereg);stage], mk:v(1));
+         match stagestart with
+            [accnm;accnext;acks]  -> {
+               e2 = if(length(acks) == 1) mk:expr:v(mk:reg(car(acks)))
+                    else mk:expr:op('EQ', [mk:reg(accnext);mkones(length(acks))],
+                            mk:v(1));
+               mk:expr:op('And', [mk:value:e(e1); mk:value:e(e2)], mk:v(1))
+            }
+          | else -> e1};
    collector(addwire, getwires)
    collector(addinst, getinsts)
     { with target (hls3) {
       iter 'op'(inst, fn, cycles, args, tp) in insts do {
+         reqack = (match cycles with 'd'(nc, stagereg, stage, stagestart) ->  {
+                         ackwire = %Sm<<(inst, "_ack");
+                         addwire(mk:modentry:wire(mk:v(1), ackwire));
+                         stageexpr = makestageexpr(stagereg, stage, stagestart);
+                         [ mk:instport:p('req', stageexpr);
+                           mk:instport:p('ack', mk:v(mk:reg(ackwire)))]}
+                    | else -> []);
          addwire(mk:modentry:wire(tp, %Sm<<(inst, "_out")));
          addinst(
             mk:modentry:inst(inst, fn, [],
                           [mk:instport:p('clk', mk:v(mk:reg('clk')));
                            mk:instport:p('reset', mk:v(mk:reg('reset')));
+                           @reqack;
                            @map a in args count i do {
                              mk:instport:p(%Sm<<("p", i), a)
                             };
@@ -206,11 +305,47 @@ function ll_to_hls3_lower_insts(top) {
        deep top {
           module -> mk:node(es = newwires :: es :: newinsts)};
        deep expr {
-          op_commit -> mk:v(mk:reg(%Sm<<(inst, "_out")))
+          op_commit ->
+             mk:v(mk:reg(%Sm<<(inst, "_out")))
         | else -> node()};
        deep stmt {
           op_start -> mk:nop()
         | else -> node()}}}}}
+
+
+\pfcode{
+function ll_to_hls3_lower_waitacks(top) {
+   // Make a vector of ones of a given length
+   pow2(b) = 
+     notnet(int b)
+        {leave 1<<b;};
+   mkones(num) = with target (hls3) {
+      mk:value:const( pow2( num ) - 1, mk:v(num) )};
+   mkbits(lst) = with target (hls3) {
+      mk:expr:op('compose', map l in lst do
+                                mk:value:reg(l), mk:v(length(lst)))};
+   collector(addtop, gettops) {
+     visit:hls3 /rec/ (top: top) {
+       deep top {
+           module -> mk:node(es = gettops()::es) };
+       deep stmt {
+           waitcommits -> {
+             if (length(acks) == 1) {
+               mk:if(mk:v(mk:reg(car(acks))),
+                     body, mk:begin(ss = [mk:stmt:nop()]))
+             } else {
+               addtop(mk:modentry:register(mk:v(length(acks)), accnm));
+               addtop(mk:modentry:wire(mk:v(length(acks)), accnext));
+               addtop(mk:modentry:assign(accnext,
+                          mk:e(mk:op('Or', [mk:reg(accnm);
+                                            mk:e(mkbits(acks))],
+                                      mk:v(length(acks))))));
+               mk:if(mk:op('EQ', [mk:reg(accnext);mkones(length(acks))],
+                           mk:v(1)),
+                     body,
+                     mk:set(accnm, mk:v(mk:reg(accnext))))
+            }}
+       | else -> node()}}}}}
 
 \pfcode{
 function ll_to_hls3_sort_decls(top) {
@@ -269,17 +404,31 @@ function ll_to_hls_do_pragmas(aenv, top, pragmas, loops) {
             | else -> t}, top, pragmas)}}
 
 \pfcode{
-function ll_to_hls_driver(top0, pragmas, loops) {
+function ll_to_hls_is_pipelined(aenv, pragmas) {
+
+   is_pragma_pipe(fn) =
+     (fn === '_pragma_hls_pipeline') ||
+     (fn === '_pragma_hls_pipeline_loop');
+      
+   foldl(fun(a,p) {
+           match p with
+              [bb;loc;'call'(fn,@args)] ->
+                 (a || is_pragma_pipe(fn))
+            | else -> a}, [], pragmas)}}
+
+\pfcode{
+function ll_to_hls_driver(devenv, top0, pragmas, loops) {
    top = ll_to_hls_prep_geps(top0);
    typeenv0 = ll_module_types([]);
    types = ll_propagate_types_fun(typeenv0, top);
    aenv = ll_to_hls_prep_memories(top);
    phirenames = mkhash();
+   pipelined_p  = ll_to_hls_is_pipelined(aenv, pragmas);
    bbs = collector(addbb, getbbs) {
       visit:ir2 (irtoplevel: top) {
          once irbblock {
             bblock -> {
-               bbs = ll_to_hls_bbs_prep(aenv, node, types, phirenames);
+               bbs = ll_to_hls_bbs_prep(devenv, aenv, node, types, phirenames, pipelined_p);
                iter b in bbs do
                   addbb(ll_to_hls_bb_split(aenv, b, types))}}};
       getbbs()};
@@ -343,18 +492,21 @@ function ll_to_hls_driver(top0, pragmas, loops) {
    //println(prnt1(h2));
    h3  = ll_to_hls_remove_phis(h2);
 
-   //println("--------------O");
    h4  = ll_to_hls_lower_hls1(h3);
-   //prnt2=gen_pprint_ast(hls2, top);
-   //println(prnt2(h4));
-   //println("---------------------------------");
 
    h4x = h4;//if (pragmas) h4 else ll_to_hls_opt_registers(aenv, h4); // TODO!!!
-   ret0 = ll_to_hls_lower_fsm(h4x);
+   h4y = ll_to_hls_expand_commits(h4x);
+   h4z = ll_to_hls_fill_op_starts(h4y);
+   h4zz = ll_to_hls_zero_ack_regs(h4z);
+   //println("--------------O");
+   //prnt2=gen_pprint_ast(hls2, top);
+   //println(prnt2(h4zz));
+   //println("---------------------------------");
+   ret0 = ll_to_hls_lower_fsm(h4zz);
    ret2 = ll_to_hls_lower_mems(aenv, ret0);
    ret3 = ll_to_hls3_lower_insts(ret2);
-   
-   ret  = ll_to_hls3_sort_decls(ret3);
+   ret3x = ll_to_hls3_lower_waitacks(ret3);
+   ret  = ll_to_hls3_sort_decls(ret3x);
    return ret}}
 
 %%%%%%%%%%%%%%%

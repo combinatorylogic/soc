@@ -135,7 +135,8 @@ collector(eqadd, eqget) {
        deep irpair: {e(nm); ohashput(varht, nm, nm)};
        deep irexpr(dst) {
           op_commit -> {
-             eqadd('after'(dst, getvar(opstart), cycles));
+             ncycles = (match cycles with 'd'(n) -> n | else -> cycles);
+             eqadd('after'(dst, getvar(opstart), ncycles));
              adddeps(dst, node)}
        |  phi -> {
              eqadd('entry'(dst));
@@ -203,10 +204,10 @@ function ll_to_hls_addedge(ordgraph, f, t) {
 
 \pfcode{
 %"ir2:irbblock -> *ir2split:irbblock"
-function ll_to_hls_bbs_prep(aenv, bb0, types, phirenames) {
+function ll_to_hls_bbs_prep(devenv, aenv, bb0, types, phirenames, pipelined) {
    // 1. Get a list of memories involved
   <memorders:bb> = ll_to_hls_bb_memories(aenv, bb0);
-   bb1 = ll_to_hls_bb_splitops(aenv, bb);
+   bb1 = ll_to_hls_bb_splitops(devenv, aenv, bb, pipelined);
    bb1eqns = ll_to_hls_bb_equations(aenv, bb1);
    bbresults = run_clpfd(bb1eqns);
    newbbs =  ll_to_hls_multiply_bblocks(aenv, bb1, bbresults, phirenames);

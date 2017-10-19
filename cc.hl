@@ -8,13 +8,15 @@ litinclude ("./doc/emit") "./backends/c2/emit.hl"
 
 define cmdline_imul = mkref(true)
 define arch = mkref('small1')
+define subarch = mkref('none')
 
 function prepare(env, mdl) {
+ hlsenv = hls_devenv(^arch, ^subarch);
  visit:ir2(irmodule: mdl) {
       deep irtoplevel {
           %function -> if (body) {
              if (filter cc as match cc with 'hls'() -> true)
-                 prep_hls(env, %generic-filepath("."), node, name) // TODO: pass ^arch here
+                 prep_hls(hlsenv, env, %generic-filepath("."), node, name)
              else if (deref( %llvm-optimise )) {
                    <g2tp:g2> = ll_genssa_opt(env, node);
                     // Do it here for now, later the backend may want to see some
@@ -96,6 +98,13 @@ collector(fadd,fget) {
     match a with
       ["/out";mdlname;@rest] -> {mname := mdlname;loop(rest)}
     | ["/arch";archname;@rest] -> {arch := %Sm<<(archname); loop(rest)}
+    | ["/subarch";subname;@rest] ->
+            {subarch := %Sm<<(subname);
+             if (subarch === 'ice40') { // some defaults
+                c2_ram_end := 1023;
+                c2_enable_muops := [];
+             };
+             loop(rest)}
     | ["/imul";@rest] -> {cmdline_imul := true; loop(rest)}
     | ["/noimul";@rest] -> {cmdline_imul := []; loop(rest)}
     | ["/c2ram";n;@rest] -> {c2_ram_end := %S->N(n); loop(rest)}
@@ -123,6 +132,8 @@ collector(fadd,fget) {
                 "Options:";
                 "   /out <modulename>   : save bitcode to a given module";
                 "   /arch small1|c2     : select target CPU";
+                "   /subarch ice40|spartan6|artix7";
+                "                       : select target hardware configuration";
                 "   /imul               : enable IMUL and the other extended instructions (Small1)";
                 "   /noimul             : disable IMUL and the other extended instructions (Small1)";
                 "   /d   <dllname>      : load a given MBase dll";

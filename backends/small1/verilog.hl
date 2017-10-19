@@ -1,0 +1,23 @@
+%literate:
+
+\pfcode{
+function small1_init_binops()
+{
+  fn(sub) = {
+    ht = mkhash();
+    iter [nm;fnm;delay] in [
+       'binop-Mul-pipe'('Mul', 4);
+       'binop-Mul'('Mul', 4);
+       'binop-SDiv-pipe'('Div', 17);
+       'binop-SDiv'('Div', 17);
+       'binop-SRem-pipe'('Rem', 17);
+       'binop-SRem'('Rem', 17)
+    ] do ohashput(ht, nm, [fnm;delay]);
+    ht};
+  ohashput(hls_dev_environments, 'small1', fn);
+}
+small1_init_binops()
+}
+
+
+%%%%

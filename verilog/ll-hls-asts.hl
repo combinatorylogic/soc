@@ -148,7 +148,7 @@ ast hls1 : hls0 () recform {
         | nphi(ident:fsm, ident:stage, *phiarg:args)
         | v(value:v)
         | load_commit(ident:mem, ident:reg)
-        | op_commit(ident:inst)
+        | op_commit(ident:inst, ident:stage, number:cycles)
         ;
    iop += nphi(ident:fsm, ident:stage, *phiarg:args)
        |  -phi
@@ -165,15 +165,17 @@ Phis are replaced with selects by now.
 
 \pfcode{
 ast hls2 : hls1() recform {
-   fsmstage = stage(label:name, *stmt:body);
+   fsmstage = stage(label:name, ?cndx:startcnd, *stmt:body);
    modentry += xfsm(ident:nm, label:start, stmt:reset, *fsmstage:ss)
             |  xpipeline(ident:nm, stmt:reset, stmt:body)
             |  -fsm
             |  -pipeline
             ;
    expr += -nphi
+        | waitcommits(ident:accnm, ident:accnext, *ident:acks)
         ;
    stmt = begin(*stmt:ss)
+        | waitcommits(ident:accnm, ident:accnext, *ident:acks, stmt:body)
         | if(expr:e, stmt:tr, stmt:fl)
         | goto(label:stage)
         | switch(expr:id, stmt:dflt, *case:cs)

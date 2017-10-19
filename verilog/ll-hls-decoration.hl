@@ -30,7 +30,7 @@ function ll_to_hls_lower_hls1(top) {
                mk:stmt:set(r, mk:v(zero))])};
          makeidle(start) =
             with target(hls2) {
-               mk:fsmstage:stage('IDLE', [
+               mk:fsmstage:stage('IDLE', [], [
                                           mk:set('ACK', mk:v(zero));
                                           mk:if(mk:op('EQ',[mk:reg('REQ');one], mk:v(32)), mk:stmt:goto(start),
                                                 mk:stmt:goto('IDLE'))])};
@@ -43,7 +43,7 @@ function ll_to_hls_lower_hls1(top) {
             deep pipestage {
               stage -> ss}; // TODO: stalls
             deep fsmstage {
-              stage -> mk:fsmstage:stage(name, ss :: next)};
+              stage -> mk:fsmstage:stage(name, [], ss :: next)};
             deep instr {
               a -> mk:stmt:set(reg, op)
             | z -> op};

@@ -99,4 +99,23 @@ function process_inlined_verilog_c2(fnm, vlg) {
 }}
 
 
+\pfcode{
+function c2_init_binops()
+{
+  fn(sub) = {
+    ht = mkhash();
+    iter [nm;fnm;delay] in [
+       'binop-Mul-pipe'('Mul', if(sub==='ice40') 3 else 4);
+       'binop-Mul'('MulFSM', 'd'(1));
+       'binop-SDiv-pipe'('Div', 17);
+       'binop-SDiv'('DivFSM', 'd'(1));
+       'binop-SRem-pipe'('Rem', 17);
+       'binop-SRem'('RemFSM', 'd'(1))
+    ] do ohashput(ht, nm, [fnm;delay]);
+    ht};
+  ohashput(hls_dev_environments, 'c2', fn);
+}
+c2_init_binops()
+}
+
 %%%%%%%%

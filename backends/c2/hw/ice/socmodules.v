@@ -59,6 +59,8 @@ assign PCdebug8 = PCdebug[7];
    wire [31:0]     data_bus_in_uart;
    wire            data_bus_strobe_uart;
 
+`ifdef ENABLE_UART
+
    uartmm uart1(.clk(clk),
                 .rst(rst),
 
@@ -73,3 +75,8 @@ assign PCdebug8 = PCdebug[7];
                 .data_b_in(ram_data_out_b),
                 .data_b_we(ram_we_out)
                 );
+`else // !`ifdef ENABLE_UART
+
+   assign data_bus_strobe_uart = 0;
+
+`endif

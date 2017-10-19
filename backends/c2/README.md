@@ -98,3 +98,5 @@ about 35MHz. Of course, using extended instructions can affect timing significan
 
 The default Nexys4DDR SoC includes an LED output and a 640x480 monochrome VGA. There is also an optional UART 
 (up to 115200) and an optional 7-segment display driver.
+
+On the BlackIce board we have to stick to 25MHz, because we cannot use PLLs with 16-bit SRAM.

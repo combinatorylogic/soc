@@ -1,4 +1,4 @@
-#include "./runtime_ice.c"
+#include "./runtime_ice_small.c"
 #include "./ice_vga.c"
 
 ##define fixed_point_width = 19

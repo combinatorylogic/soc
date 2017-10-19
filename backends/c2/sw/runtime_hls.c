@@ -27,6 +27,7 @@ inline int32 _SHL(int32 a, int32 b) {
   } while(i>0);
   return r;
 }
+
 /*
 __hls void _HLS_IMUL(int32 a0, int32 b0, int32 *ret) {
         *ret = a0*b0;
@@ -39,7 +40,6 @@ inline int32 _IMUL(int32 a0, int32 b0)
         return ret;
 }
 */
-
 
 int32 _IMUL(int32 a0, int32 b0)
 {
@@ -63,7 +63,6 @@ int32 _IMUL(int32 a0, int32 b0)
                 } else { mul_req <= 0; };
         return inline verilog exec {} return ( mul_out );
 }
-
 
 
 __hls void HW_IDIVMOD(int32 nDividend, int32 nDivisor, int32 *Mod, int32 *Ret)

@@ -42,17 +42,29 @@ ice: ram.hex
 	make -C hw/ice c2_route_test
 
 icecustom: sw/icetest.c
-	mono ../../clikecc.exe /arch c2 /o+ sw/icetest.c /out custom_ice	
+	mono ../../clikecc.exe /arch c2 /subarch ice40 /o+ sw/icetest.c /out custom_ice	
 	make -C hw/ice c2_route_c.exe
 	make -C hw/ice c2_route_test_c
 
 blackicemand: sw/icemand.c
-	mono ../../clikecc.exe /arch c2 /o+ sw/icemand.c /c2barrel /c2cmpops /out custom_ice
-	rm -f hw/blackice/*.txt hw/blackice/*.blif
-	make -C hw/blackice EXTRA=" -DENABLE_BARREL_SHIFTER=1 "
+	mono ../../clikecc.exe /arch c2 /subarch ice40 /o+ sw/icemand.c /c2barrel /c2cmpops /out icemand
+	rm -f hw/blackice/c2_soc_mandslow.txt hw/blackice/c2_soc_mandslow.blif
+	make -C hw/blackice EXTRA=" -DENABLE_BARREL_SHIFTER=1 " BITNAME=c2_soc_mandslow PROG_NAME=icemand
 
 blackicemandhls: sw/icemand1.c
-	mono ../../clikecc.exe /arch c2 /o+ sw/icemand1.c /c2barrel- /c2cmpops /out custom_ice
-	rm -f hw/blackice/*.txt hw/blackice/*.blif
-	make -C hw/blackice EXTRA=" "
+	mono ../../clikecc.exe /arch c2 /subarch ice40 /o+ sw/icemand1.c /c2barrel- /c2cmpops /out icemand1
+	rm -f hw/blackice/c2_soc_mandhls.txt hw/blackice/c2_soc_mandhls.blif
+	make -C hw/blackice EXTRA=" " BITNAME=c2_soc_mandhls PROG_NAME=icemand1
 
+
+# this one should be built without optimisations (instruction scheduler cannot accomodate for
+#  the lack of the memqueue registers
+blackicemandpipe: sw/icemand2.c
+	mono ../../clikecc.exe /arch c2 /subarch ice40 /o- sw/icemand2.c /c2barrel- /c2cmpops /out icemand2
+	rm -f hw/blackice/c2_soc_mandpipe.txt hw/blackice/c2_soc_mandpipe.blif
+	make -C hw/blackice EXTRA="  -DDISABLE_MEMQUEUE=1 " BITNAME=c2_soc_mandpipe PROG_NAME=icemand2
+
+blackicemandpipe2: sw/icemand3.c
+	mono ../../clikecc.exe /arch c2 /subarch ice40 /o- sw/icemand3.c /c2barrel- /c2cmpops /out icemand3
+	rm -f hw/blackice/c2_soc_mandpipe2.txt hw/blackice/c2_soc_mandpipe2.blif
+	make -C hw/blackice EXTRA="  -DDISABLE_MEMQUEUE=1  " BITNAME=c2_soc_mandpipe2 PROG_NAME=icemand3

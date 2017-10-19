@@ -57,7 +57,8 @@ function ll_to_hls_explicit_fsms(aenv, top) {
          | phi    -> mk:expr:nphi(fsm, stage, args)
          | v      -> mk:expr:v(v)
          | load_commit -> mk:expr:load_commit(mem, reg)
-         | op_commit -> mk:expr:op_commit(inst)
+         | op_commit ->
+               mk:expr:op_commit(inst, stage, cycles)
          | else   -> ccerror('CANNOT_BE_WIRE'(wire))
          }};
      makeassign(fsm, stage, nd) = 

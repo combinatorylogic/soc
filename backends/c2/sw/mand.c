@@ -6,22 +6,24 @@
 
 int32 mand(int32 cx, int32 cy)
 {
-  int32 i;
-  int32 vx = 0;
-  int32 vy = 0;
-  int32 dvx = 0; int32 dvy = 0;
-  for (i = 0; i < 100; i++) {
-    int32 vx1 = dvx - dvy + cx;
-    int32 vy1 = ((vx * vy)>>(.wf - 1)) + cy;
-    vx = vx1; vy = vy1;
-    dvx = (vx * vx)>> .wf;
-    dvy = (vy * vy)>> .wf;
-    int32 r = dvx+dvy;
-    if ( r > .f 4.0 )
-      return i;
-  }
-  return 100;
+        int32 i;
+        int32 vx = 0;
+        int32 vy = 0;
+        int32 dvx = 0; int32 dvy = 0;
+        for (i = 0; i < 100; i++) {
+                int32 vx1 = dvx - dvy + cx;
+                int32 vy1 = ((vx * vy)>>(.wf - 1)) + cy;
+                vx = vx1; vy = vy1;
+                dvx = (vx * vx)>> .wf;
+                dvy = (vy * vy)>> .wf;
+                int32 r = dvx+dvy;
+                if ( r > .f 4.0 ) {
+                        return i;
+                }
+        }
+        return 100;
 }
+
 
 void bootentry()
 {
@@ -39,7 +41,7 @@ void bootentry()
     _printchr(9);
     for (x = 1; x < 100; x++) {
       int32 rx = (dx * x - .f 2.0);
-      int32 c =  mand(rx, ry);
+      int32 c = mand(rx, ry);
       if (c < 100) _printchr('0'+c); else _printchr('+');
     }
     _printchr(10);_printchr(13);

@@ -184,6 +184,37 @@ module hls_Mul(input clk,
 endmodule
 
 
+module mul16x16 (input [15:0]      a,
+                 input [15:0]      b,
+                 output [31:0] o);
+
+   assign o = a * b;
+   
+endmodule // mul16x16
+
+
+
+`include "../rtl/mul.v"
+
+
+module hls_MulFSM(input clk,
+                  input         reset,
+                  input         req,
+                  output        ack,
+                  
+                  input [31:0]  p0,
+                  input [31:0]  p1,
+                  output [31:0] out);
+
+    mul32x32_fsm S(.clk(clk),
+                   .rst(reset),
+                   .req(req),
+                   .ack(ack),
+                   .p0(p0),
+                   .p1(p1),
+                   .out(out));
+
+endmodule // hls_MulFSM
 
 module hlsblockram (input         clk,
                     
@@ -212,4 +243,48 @@ module hlsblockram (input         clk,
 
 endmodule // toyblockram
 
+
+
+`include "../rtl/div2.v"
+
+// 8-stage integher division pipeline
+module hls_Div(input clk,
+               input         reset,
+
+               input [31:0]  p0,
+               input [31:0]  p1,
+
+               output [31:0] out);
+
+   wire                      div0, ovf;
+   wire [31:0]               rem;
+   
+   div_pipelined2 #(.WIDTH(32)) d(.clk(clk),
+                                  .rst(reset),
+                                  .z(p0),
+                                  .d(p1),
+                                  .quot(out),
+                                  .rem(rem));
+endmodule
+
+
+// 8-stage integher division pipeline
+module hls_Rem(input clk,
+               input         reset,
+
+               input [31:0]  p0,
+               input [31:0]  p1,
+
+               output [31:0] out);
+
+   wire [31:0]               quot;
+   
+   div_pipelined2 #(.WIDTH(32)) d(.clk(clk),
+                                  .rst(reset),
+                                  .z(p0),
+                                  .d(p1),
+                                  .quot(quot),
+                                  .rem(out));
+
+endmodule
 

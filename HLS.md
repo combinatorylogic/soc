@@ -16,7 +16,6 @@ There is a number of limitations:
 * Every local array is translated into a 2-port registered Verilog memory (and is likely to be synthesised on
   block rams on an FPGA). Access to different arrays is considered independent and can be parallelised.
 * No floating point numbers
-* No integer division
 
 Code generated from this HLS inference should be used the same way as any other inlined Verilog - e.g.:
 
@@ -246,9 +245,9 @@ possible.
 It's planned to add support for:
 
 * Accessing the system memory (including everything mapped)
-* Integer division (both pipelined and FSM) and floating point (pipelined)
+* Floating point (pipelined and FSM)
 * Shared ALU inference (FSM only)
-* Arbitrary bit widths arithmetic
+* Arbitrary bit widths arithmetic (part done, need a cost model and parametric complex ops)
 * Explicit vector operations
 * Structures (both as registers and as a RAM datatype)
 * Accessing the I/O pins directly
@@ -262,7 +261,6 @@ It's planned to add support for:
 * Change the scheduling priorities - move everything as much down as possible to avoid needless pipeline registers propagation. This applies to things like loop induction variables, for example, if they're not used inside the loop body.
 
 And, of course, there is a lot of optimisations that the HLS compiler can do.
-
 
 # NoC:
 

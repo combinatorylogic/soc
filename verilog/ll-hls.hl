@@ -84,6 +84,43 @@ Translation pipeline:
 \item Final code generation
 \end{itemize}
 
+
+\phcode{
+/*
+
+An overview:
+
+ll_to_hls_driver:
+  ll_to_hls_prep_geps  ->
+    ll_propagate_types_fun ->
+      ll_to_hls_prep_memories ->
+       ( for each bb: ll_to_hls_bbs_prep -> ll_to_hls_bb_split ) ->
+      ll_to_hls_rename_phis ->
+      ll_to_hls_mark_registers ->
+      ll_to_hls_mark_output ->
+      ll_to_hls_lift_wires (nophis) ->
+      ll_to_hls_do_pragmas ->
+      ll_to_hls_lift_wires (phis) ->
+      ll_to_hls_explicit_fsms ->
+      ll_to_hls_remove_phis ->
+      ll_to_hls_lower_hls1 ->
+      ll_to_hls_expand_commits ->
+      ll_to_hls_fill_op_starts ->
+      ll_to_hls_zero_ack_regs ->
+      ll_to_hls_lower_fsm ->
+      ll_to_hls_lower_mems ->
+      ll_to_hls3_lower_insts ->
+      ll_to_hls3_lower_waitacks ->
+      ll_to_hls3_sort_decls.
+
+prep_hls:
+   ll_genssa_alt_opt ->
+     ll_to_hls_driver ->
+       ll_to_hls_hls3_to_verilog
+
+*/ []
+}
+
 \phcode{include "extra.hl"}
 
 \phcode{litinclude "ll-opt-hls.hl"}

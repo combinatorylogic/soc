@@ -160,7 +160,7 @@ module socram(input clk,
 
 endmodule
 `endif // !`ifdef RAM_REGISTERED_OUT
-
+/*
 module generic_mul ( a, b, clk, pdt);
    parameter size = 32, level = 5;
    input [size-1 : 0] a;
@@ -203,7 +203,7 @@ module hls_Mul(input clk,
                                             .b(p1),
                                             .pdt(out));
 endmodule
-
+*/
 
 module mul16x16 (input [15:0]      a,
                  input [15:0]      b,
@@ -212,3 +212,111 @@ module mul16x16 (input [15:0]      a,
    assign o = a * b;
    
 endmodule // mul16x16
+
+
+module hls_Mul(input clk,
+               input reset,
+
+               input [31:0]  p0,
+               input [31:0]  p1,
+               output [31:0] out);
+
+   wire [15:0]               a = p0r[31:16];
+   wire [15:0]               b = p0r[15:0];
+   wire [15:0]               c = p1r[31:16];
+   wire [15:0]               d = p1r[15:0];
+
+   wire [15:0]               ad = a * d;
+   wire [15:0]               bc = b * c;
+   wire [31:0]               bd = b * d;
+
+   reg [15:0]                adr;
+   
+   reg [31:0]                p0r;
+   reg [31:0]                p1r;
+   reg [31:0]                t1;
+   reg [31:0]                t2;
+   reg [31:0]                t3;
+   assign out = t3;
+   
+
+   always @(posedge clk)
+     begin
+        p0r <= p0; p1r <= p1;
+        t1 <= bd + {bc[15:0], 16'b0}; adr <= ad[15:0];
+        t2 <= t1 + {adr[15:0], 16'b0};
+        t3 <= t2;
+        
+     end
+   
+   
+endmodule // hls_Mul
+
+
+`include "../rtl/div2.v"
+
+// 8-stage integher division pipeline
+module hls_Div(input clk,
+               input         reset,
+
+               input [31:0]  p0,
+               input [31:0]  p1,
+
+               output [31:0] out);
+
+   wire                      div0, ovf;
+   wire [31:0]               rem;
+   
+   div_pipelined2 #(.WIDTH(32)) d(.clk(clk),
+                                  .rst(reset),
+                                  .z(p0),
+                                  .d(p1),
+                                  .quot(out),
+                                  .rem(rem));
+endmodule
+
+
+// 8-stage integher division pipeline
+module hls_Rem(input clk,
+               input         reset,
+
+               input [31:0]  p0,
+               input [31:0]  p1,
+
+               output [31:0] out);
+
+   wire [31:0]               quot;
+   
+   div_pipelined2 #(.WIDTH(32)) d(.clk(clk),
+                                  .rst(reset),
+                                  .z(p0),
+                                  .d(p1),
+                                  .quot(quot),
+                                  .rem(out));
+
+endmodule
+
+
+
+`include "../rtl/mul.v"
+
+
+module hls_MulFSM(input clk,
+                  input         reset,
+                  input         req,
+                  output        ack,
+                  
+                  input [31:0]  p0,
+                  input [31:0]  p1,
+                  output [31:0] out);
+
+    mul32x32_fsm S(.clk(clk),
+                   .rst(reset),
+                   .req(req),
+                   .ack(ack),
+                   .p0(p0),
+                   .p1(p1),
+                   .out(out));
+
+endmodule // hls_MulFSM
+
