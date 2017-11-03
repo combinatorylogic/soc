@@ -380,6 +380,8 @@ function c2_mkbinop(op, dst, l, r) {
       'Add' -> 'aluop'('add', l, r, 'vreg'(dst), 'zero'()) // TODO: move small constants to immediates
     | 'And' -> 'aluop'('and', l, r, 'vreg'(dst), 'zero'())
     | 'Sub' -> 'aluop'('sub', l, r, 'vreg'(dst), 'zero'())
+    | 'And' -> 'aluop'('and', l, r, 'vreg'(dst), 'zero'())
+    | 'Or' -> 'aluop'('or', l, r, 'vreg'(dst), 'zero'())
     | 'LShr' -> 'aluop'('shr', l, r, 'vreg'(dst), 'zero'())
     | 'AShr' -> 'aluop'('ashr', l, r, 'vreg'(dst), 'zero'())
     | 'Shl' -> 'aluop'('shl', l, r, 'vreg'(dst), 'zero'())

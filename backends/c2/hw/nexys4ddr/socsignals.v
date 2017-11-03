@@ -10,4 +10,5 @@
                  output [3:0]      vga_green,
                  output [3:0]      vga_blue,
 
-
+                 output [7:0]      SEG,
+                 output [7:0]      AN,

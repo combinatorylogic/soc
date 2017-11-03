@@ -29,6 +29,15 @@
                      .data_b_in(ram_data_out_b),
                      .data_b_we(ram_we_out));
 
+   sevensegmm seg7 (.clk(clk),
+                    .rst(rst),
+                    .addr_b(ram_addr_in_b),
+                    .data_b_in(ram_data_out_b),
+                    .data_b_we(ram_we_out),
+                    .seg(SEG),
+                    .an(AN));
+
+
 /*
    wire [31:0]     data_bus_in_uart;
    wire            data_bus_strobe_uart;

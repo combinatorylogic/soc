@@ -1,3 +1,5 @@
+
+
 module uartmm(input clk,
               input             rst,
 
@@ -288,3 +290,62 @@ module hls_Rem(input clk,
 
 endmodule
 
+module sevenseg(input clk100mhz,
+                input [2:0]      addr,
+                input [7:0]      data,
+                input            we,
+                output reg [7:0] seg,
+                output reg [7:0] an);
+
+   reg [7:0]                 mem[0:7];
+
+   always @(posedge clk100mhz)
+     begin
+        if (we) mem[addr] <= data;
+     end
+
+   reg [15:0] counter;
+   wire [2:0] caddr;
+   reg [2:0]  pcaddr;
+
+   assign caddr = counter[15:13];
+   
+   always @(posedge clk100mhz)
+     begin
+        counter <= counter + 1;
+        if (caddr != pcaddr) begin
+           // Common anode must be driven to low
+           if (caddr == 0) an <= (255-1);
+           else an <= (an << 1)|1'b1;
+           seg <= ~(mem[caddr]);
+           pcaddr <= caddr;
+        end
+     end
+
+endmodule // sevenseg
+
+module sevensegmm(input clk,
+                  input        rst,
+
+                  input [31:0] addr_b,
+                  input [31:0] data_b_in,
+                  input [31:0] data_b_we,
+                  
+                  output [7:0] seg,
+                  output [7:0] an);
+
+   wire [2:0]                      addr;
+   wire [7:0]                      data;
+   wire                            we;
+   
+   sevenseg s7 (.clk100mhz(clk),
+                .addr(addr),
+                .data(data),
+                .we(we),
+                .seg(seg), .an(an));
+
+   assign we = (addr_b == 65553)?data_b_we:0;
+   assign data = data_b_in[7:0];
+   assign addr = data_b_in[10:8];
+
+endmodule // sevensegmm

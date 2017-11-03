@@ -9,14 +9,14 @@
      65536: debug print (Verilator only)
  
      65537: UART IN READY (READ)
-     65538: UART OUT READY (WRITE)
+     65538: UART OUT READY (READ)
      65539: UART IN (READ) / UART OUT (WRITE)
  
-     65540: LEDs
-     65541: HALT
-     65542: CLOCK COUNTER
-  
- 131072 - ...  : VRAM flat
+     65540: LEDs (WRITE)
+     65541: HALT (WRITE)
+     65542: CLOCK COUNTER (READ)
+ 
+     65553: 7-segment display (WRITE)
  
  */
 
@@ -104,6 +104,7 @@ module c2soc(input sys_clk_in,
 
    wire [31:0]     data_bus_in_cntr;
    wire            data_bus_strobe_cntr;
+`endif
    
    clockcounter cnt1
      (.clk(clk),
@@ -120,15 +121,12 @@ module c2soc(input sys_clk_in,
       );
    
    
-`endif
 
    // ... and so on - ROMs, VGA, ethernet, whatever - including the hoisted user-defined modules
 
    assign ram_data_in_b =
                          data_bus_strobe_ram?data_bus_in_ram:
-`ifdef SIMULATION
                          data_bus_strobe_cntr?data_bus_in_cntr:
-`endif
                          
                          `include "socdata.v"
                          0;
@@ -166,6 +164,8 @@ module halt (input clk,
         end
         
 endmodule // halt
+`endif
+
 
  `ifdef RAM_REGISTERED_OUT
 module clockcounter(input clk,
@@ -227,7 +227,5 @@ module clockcounter(input clk,
      end
 endmodule // clockcounter
  `endif
-
-`endif
 
 

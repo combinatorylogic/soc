@@ -1,6 +1,7 @@
 // A quad-core HLS version
 #include "./runtime_hls.c"
 #include "./vgagfx.c"
+#include "./7seg.c"
 
 ##define fixed_point_width = 19
         
@@ -227,7 +228,7 @@ void bootentry()
         else if (zoom < 1) dz = 1;
         // Ignored on an FPGA, terminates in Verilator
         uint32 clk1 = _clockcnt();
-        //        _printnum((clk1 - clk0) / 1000); _printchr(13); _printchr(10);
+        _sseg_num((clk1 - clk0) / 1000);
         _vmemdump();
         _testhalt();
         // Avoid a VGA flicker and tearing

@@ -735,12 +735,9 @@ module `CPUNAME
         case (sfsm_state)
           S_IDLE:
             begin
-               // if (ext_done) $display("EXT_DONE [%d,%d]", stall, stall_but_ext);
-               
                ext_done <= 0;
                if (exec_typee && exec_immed10[0] && ~stall_but_ext && ~ext_done) begin
                   sfsm_state <= S_WAIT;
-                  // $display("TO-WAIT [%x]", decode_Instr);
                end
             end
           S_WAIT:
