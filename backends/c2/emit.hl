@@ -730,9 +730,9 @@ function c2_extract_regalloc(src, typ, ctest) {
         lgen = genget();
         lkill = killget();
         match ret with 
-           [] -> 'genkill'(lkill, lgen)
-         | 'gotoconds'(x,@rest) -> 'gotoconds'(lgen,@rest)
-         | else -> ret};
+           [] -> ['genkill'(lkill, lgen)]
+         | 'gotoconds'(x,@rest) -> ['gotoconds'(lgen,@rest)]
+         | else -> ['genkill'(lkill, lgen); ret]};
    'goto'('entry'):
     visit:ir2isa (irtoplevel: src) {
        deep irtoplevel {
@@ -740,7 +740,7 @@ function c2_extract_regalloc(src, typ, ctest) {
         | else -> ccerror('OOPSIE'())};
        deep ircode : map append b in bs do b;
        deep irbblock {
-          bblock -> ss};
+          bblock -> map append s in ss do s};
        once c2instr { else -> doinstr(node) }}}}
 
 \pfcode{
@@ -1023,6 +1023,12 @@ TODO!!! Now we could have used the rules above to do the proper instruction
 scheduling, but for a moment we'll just settle on the most trivial thing, just
 sprinkling some nops here and there without any instruction reordering.
 
+\pfcode{
+function c2_sched_fuse(n, o) {
+  return n :: map append o do {
+     match o with
+        'produce1'(n,r) -> if (n>1) ['produce1'(n-1, r)] else []
+      | else -> []}}}
 
 \pfcode{
 function c2_schedule(src) {
@@ -1046,9 +1052,10 @@ function c2_schedule(src) {
            'load'(@_) -> if (^store) if(not(^max) || (^max < 1)) max := 1
         |  'depends'(r) -> aif(chk = ohashget(prod, r)) if(not(^max) || (^max < chk)) max := chk};
       return ^max};
-   ret = map append s in src do {
+   ret = map append s in src do { // A dumb idea - we can fuse prev with current, if there are long counters there
           nw = c2_hazard_rules(s);
-          prev = ^prevr; prevr := nw;
+          println('L'(s, nw));
+          prev = ^prevr; prevr := c2_sched_fuse(nw, ^prevr);
           slots = delayslots(prev);
           depslots = dependson(nw, prev);
           if (slots && (depslots || isjump(prev))) {
