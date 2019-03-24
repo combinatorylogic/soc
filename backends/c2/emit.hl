@@ -407,14 +407,18 @@ function c2_is_intrinsic(fn) {
    // check if starts with 'c2:'
    match fn with
       '_custom2_1' -> true
+    | '_custom2_1b' -> true
     | '_custom2_0' -> true
     | '_custom1_0' -> true
     | '_custom2_0b' -> true
     | '_custom1_0b' -> true
+    | '_custom2_1b' -> true
+    | '_custom1_1b' -> true
     | '_custom1_1' -> true
     | '_custom0_1' -> true
     | '_custom0_0' -> true
     | '_custom0_0b' -> true
+    | '_custom0_1b' -> true
     | '_dbgreg' -> true
     | else -> return (parse (%S<<(fn)) as c2intrinsicfn) === 'i'
 }}
@@ -429,13 +433,16 @@ function c2_lower_intrinsic(dst, fn, args) {
    symcase fn {
       %c2:load -> ['load'('vreg'(dst), @args)]
     | %c2:store -> ['store'(@args)]
-    | %_custom2_1 -> ['aluop'('ext', cadr(args), caddr(args), 'vreg'(dst), noblk(car(args)))]
+    | %_custom2_1 ->  ['aluop'('ext', cadr(args), caddr(args), 'vreg'(dst), noblk(car(args)))]
+    | %_custom2_1b -> ['aluop'('ext', cadr(args), caddr(args), 'vreg'(dst), blk(car(args)))]
     | %_custom2_0 -> ['aluop'('ext', cadr(args), caddr(args), 'reg'('R0'), noblk(car(args)))]
     | %_custom2_0b -> ['aluop'('ext', cadr(args), caddr(args), 'reg'('R0'), blk(car(args)))]
-    | %_custom1_1 -> ['aluop'('ext', 'reg'('R0'), cadr(args),  'vreg'(dst), noblk(car(args)))]
+    | %_custom1_1 ->  ['aluop'('ext', 'reg'('R0'), cadr(args),  'vreg'(dst), noblk(car(args)))]
+    | %_custom1_1b -> ['aluop'('ext', 'reg'('R0'), cadr(args),  'vreg'(dst), blk(car(args)))]
     | %_custom1_0 -> ['aluop'('ext', 'reg'('R0'), cadr(args), 'reg'('R0'), noblk(car(args)))]
     | %_custom1_0b -> ['aluop'('ext', 'reg'('R0'), cadr(args), 'reg'('R0'), blk(car(args)))]
-    | %_custom0_1 -> ['aluop'('ext', 'reg'('R0'), 'reg'('R0'), 'vreg'(dst), noblk(car(args)))]
+    | %_custom0_1 ->  ['aluop'('ext', 'reg'('R0'), 'reg'('R0'), 'vreg'(dst), noblk(car(args)))]
+    | %_custom0_1b -> ['aluop'('ext', 'reg'('R0'), 'reg'('R0'), 'vreg'(dst), blk(car(args)))]
     | %_custom0_0 -> ['aluop'('ext', 'reg'('R0'), 'reg'('R0'), 'reg'('R0'), noblk(car(args)))]
     | %_custom0_0b -> ['aluop'('ext', 'reg'('R0'), 'reg'('R0'), 'reg'('R0'), blk(car(args)))]
     | %_dbgreg -> ['dbgnop'(car(args))]
@@ -1054,7 +1061,6 @@ function c2_schedule(src) {
       return ^max};
    ret = map append s in src do { // A dumb idea - we can fuse prev with current, if there are long counters there
           nw = c2_hazard_rules(s);
-          println('L'(s, nw));
           prev = ^prevr; prevr := c2_sched_fuse(nw, ^prevr);
           slots = delayslots(prev);
           depslots = dependson(nw, prev);

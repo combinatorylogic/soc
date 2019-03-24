@@ -11,6 +11,8 @@ ast vlhoisted {
        | inst_noreturn(number:id, number:crc)
        | inst_wait(number:id, number:crc, expression:e, 
                    *statement:ss, waitrest:r)
+       | inst_wait_return(number:id, number:crc, expression:e, 
+                          *statement:ss, waitrest:r, expression:ret)
        ;
   waitrest = else(*statement:ss)
            | nop()
@@ -29,10 +31,12 @@ function process_inlined_verilog_inner_c2(fnm, vlg, fp_pipe, fp_wait,
     chk = ohashget(execs, id);
     ohashput(execs, id, ss : chk)
   };
-  emit_wait(e,ss,r) = {
+  emit_wait(e,ss,r, ret) = {
     %S<<(" if (", verilog_pprint('expression',e), ") ",
            verilog_pprint('statement','begin'(@ss, 'nonblocking'('var'('sfsm_state'),'var'('S_IDLE')),
-                                                   'nonblocking'('var'('ext_done'),'var'('DONE')))),
+                                                   'nonblocking'('var'('ext_done'),'var'('DONE')),
+                                                   @if (ret) ['nonblocking'('var'('mem_out_ext_r'), car(ret))] else []
+                                                   )),
          match r with 
            'else'(ess) -> %S<<(" else ", verilog_pprint('statement','begin'(@ess)))
          | else -> "")
@@ -49,7 +53,10 @@ function process_inlined_verilog_inner_c2(fnm, vlg, fp_pipe, fp_wait,
           | inst_return -> addexec(id, 'begin'(
                 'nonblocking'('var'('mem_out_ext_r'), e)))
           | inst_wait -> {
-              ohashput(waits, id, emit_wait(e,ss,r));
+              ohashput(waits, id, emit_wait(e,ss,r, []));
+            }
+          | inst_wait_return -> {
+              ohashput(waits, id, emit_wait(e,ss,r, [ret]));
             }
          }
      }

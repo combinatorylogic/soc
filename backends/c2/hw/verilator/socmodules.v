@@ -53,7 +53,10 @@ wire vga_clsack;
 wire [19:0] vmem_in_addr;
 
 wire [7:0] vmem_in_data;
+wire [7:0] vmem_p1_out_data;
+
 wire vmem_we;
+wire vmem_re;
 wire vmem_select;
 
 wire vmem_bufswap;
@@ -66,6 +69,8 @@ wire vmem_bufswap;
                      .vmem_in_addr(vmem_in_addr),
                      .vmem_in_data(vmem_in_data),
                      .vmem_we(vmem_we),
+                     .vmem_re(vmem_re),
+                     .vmem_p1_out_data(vmem_p1_out_data),
                      
                      .vmem_out_addr(vmem_out_addr),
                      .vmem_out_data(vmem_out_data));

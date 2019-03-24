@@ -41,7 +41,8 @@ symbols(pfx) {
                                             (wait (var ,(Sm<< pfx "_ack"))
                                                  ((nonblocking (var ,(Sm<< pfx "_req")) (number "0")))
                                                (else
-                                                 ((nonblocking (var ,(Sm<< pfx "_req")) (number "0")))))))))}
+                                                 ((nonblocking (var ,(Sm<< pfx "_req")) (number "0")))))
+                                             ))))}
                    ,@=pf: map r in returns do
                       #`(set () (deref (var ,r))
                            (inline (integer i32) () (verilog (execop (noargs) () (return (var ,(Sm<< pfx "_" r)))))))

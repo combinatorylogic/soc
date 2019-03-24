@@ -1,7 +1,9 @@
 
 
 .vmem_we(vmem_we),
+.vmem_re(vmem_re),
 .vmem_in_data(vmem_in_data),
+.vmem_p1_out_data(vmem_p1_out_data),
 .vmem_in_addr(vmem_in_addr),
 .vmem_select(vmem_select),
 

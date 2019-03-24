@@ -24,14 +24,7 @@ mandtest: sw/mand.c sw/runtime_hls.c ../../clikecc.exe
 
 mandgfxtest: sw/mand2gfx.c sw/runtime_hls.c ../../clikecc.exe
 	rm -rf custom_out hw/verilator/custom_dir
-	mono ../../clikecc.exe /arch c2 /o+ sw/mand2gfx.c /out custom
-	make -C hw/verilator execustom
-	./hw/verilator/custom_dir/simx custom.hex
-	diff -a vgadump0000.xpm sw/mand2gfx.ref
-
-mandgfxtest8: sw/mand4gfx.c sw/runtime_hls.c ../../clikecc.exe
-	rm -rf custom_out hw/verilator/custom_dir
-	mono ../../clikecc.exe /arch c2 /o+ sw/mand4gfx.c /out custom
+	mono ../../clikecc.exe /arch c2 /subarch artix7 /o+ sw/mand2gfx.c /out custom
 	make -C hw/verilator execustom
 	./hw/verilator/custom_dir/simx custom.hex
 	diff -a vgadump0000.xpm sw/mand2gfx.ref

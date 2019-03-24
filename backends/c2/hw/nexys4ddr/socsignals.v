@@ -12,3 +12,9 @@
 
                  output [7:0]      SEG,
                  output [7:0]      AN,
+
+`ifdef ENABLE_SOUND                       
+                 // Audio PWM pin
+                 output pwm_out,
+                 output aud_sd,
+`endif                       

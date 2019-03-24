@@ -34,6 +34,10 @@ set_io TX  85
 set_io RX  88
 
 
+# Audio PWM @ PMOD3 - uncomment if ENABLE_SOUND is defined
+# set_io pwm_out 104 # PMOD[8]
+
+
 # SRAM
 set_io ADR[0] 137
 set_io ADR[1] 138

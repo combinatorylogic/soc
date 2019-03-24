@@ -133,4 +133,22 @@
 
 `endif // !`ifdef ENABLE_UART
 
+
+`ifdef ENABLE_SOUND
+   wire            sound_clr_full;
+   wire [15:0]     sound_clr_sample;
+   wire [15:0]     sound_clr_rate;
+   wire            sound_clr_req;
    
+   soundctl  sound1 ( .clk(clk),
+                      .rst(rst),
+                      .sound_clr_full(sound_clr_full),
+                      .sound_clr_sample(sound_clr_sample),
+                      .sound_clr_rate(sound_clr_rate),
+                      .sound_clr_req(sound_clr_req),
+                      .pwm_out(pwm_out)
+                      );
+
+
+  
+`endif

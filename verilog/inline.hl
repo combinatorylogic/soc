@@ -40,6 +40,8 @@ ast vlhoisted {
        | inst_noreturn(number:id, number:crc)
        | inst_wait(number:id, number:crc, expression:e, 
                    *statement:ss, waitrest:r)
+       | inst_wait_return(number:id, number:crc, expression:e, 
+                          *statement:ss, waitrest:r, expression:ret)
        ;
   waitrest = else(*statement:ss)
            | nop()
@@ -64,7 +66,8 @@ ast vlinline {
           ;
   ioprest = noreturn()
           | return(vlgxpression:e)
-          | wait(vlgexpression:e, *vlgstatement:ss, iwaitrest:rs)
+          | wait(vlgexpression:e, *vlgstatement:ss, iwaitrest:rs,
+                 .*vlgexpression:ret)
           ;
   iwaitrest = else(*vlgstatement:ss)
             | nop()
@@ -101,11 +104,16 @@ syntax of pfclike in clexpr, inner (verilog):
                 /  { return "(" [expression]:e ")" => return(e) }
                 /  { wait "(" [expression]:e ")" 
                           "{" eslist<[statement]>:ss "}"
-                          [cvwaitrest]:r => wait(e,ss,r) }
+                          [cvwaitrest]:r
+                          [cvwaitreturn]:ret
+                          => wait(e,ss,r,@ret) }
                 /  { [empty] => noreturn() }
                 ;
        cvwaitrest := { else "{" eslist<[statement]>:ss "}" => else(ss) }
                   /  { [empty] => nop() }
+                  ;
+       cvwaitreturn := { return "(" [expression]:e ")" => $wrap(e) }
+                  /  { [empty] => $nil() }
                   ;
        cvargs := { "(" cslist<[cvarg],",">:as ")" => args(@as) }
               /  { [empty] => noargs() }
@@ -136,6 +144,7 @@ syntax of pfclike in clexpr, inner (verilog):
      };
      deep ioprest {
         return -> 'integer'('i32')
+      | wait -> if (ret) 'integer'('i32') else 'void'()
       | else -> 'void'()
      }
   };
@@ -240,6 +249,14 @@ function hoist_inlined_verilog(out, mdl, argwires, argfun) {
         out('inst_noreturn'(iid, icrc));
      return 'call'(fnm, 'integer'(arg, 'i32'), @args)
   };
+  build_return_wait(iid, icrc) = fun(args) {
+     fnm = match args with
+              [a;b] -> '_custom2_1b'
+            | [a] -> '_custom1_1b'
+            | [] -> '_custom0_1b';
+     arg = argfun(iid, icrc);
+     return 'call'(fnm, 'integer'(arg, 'i32'), @args)
+  };
   build_noreturn_nowait(kind, iid, icrc) = fun(args) {
      fnm = match args with
               [a;b] -> '_custom2_0'
@@ -251,7 +268,6 @@ function hoist_inlined_verilog(out, mdl, argwires, argfun) {
      return 'call'(fnm, 'integer'(arg, 'i32'), @args)
   };
   build_noreturn(iid, icrc) = build_noreturn_nowait('noreturn',iid,icrc);
-  build_wait(iid, icrc) = build_noreturn_wait('wait',iid,icrc);
   build_return(iid, icrc) = fun(args) {
      fnm = match args with
               [a;b] -> '_custom2_1'
@@ -259,6 +275,11 @@ function hoist_inlined_verilog(out, mdl, argwires, argfun) {
             | [] -> '_custom0_1';
      arg = argfun(iid, icrc);
      return 'call'(fnm, 'integer'(arg, 'i32'), @args)
+  };
+  build_wait(iid, icrc, ret) = {
+     if (ret) {
+       build_return_wait(iid, icrc);
+     } else build_noreturn_wait('wait',iid,icrc);
   };
   add_netdef(d) = out('netdef'(d));
   add_module(path) = {
@@ -309,8 +330,11 @@ function hoist_inlined_verilog(out, mdl, argwires, argfun) {
     as = make_args(ax);
     out('inst_return'(iid, icrc, rename_expression(e, as)))
   };
-  add_wait(iid, icrc, e, ss, rs) = {
-    out('inst_wait'(iid, icrc, e, ss, rs))
+  add_wait(iid, icrc, e, ss, rs, ax, ret) = {
+    if (ret) {
+       as = make_args(ax);
+       out('inst_wait_return'(iid, icrc, e, ss, rs, rename_expression(car(ret), as)))
+    } else out('inst_wait'(iid, icrc, e, ss, rs));
   };
   gettype(ps, p) = {
     chk = ohashget(ps, p);
@@ -408,8 +432,8 @@ function hoist_inlined_verilog(out, mdl, argwires, argfun) {
              build_return(iid, icrc)
           }
         | wait -> fun(iid, icrc, ax) {
-             add_wait(iid, icrc, e, ss, rs);
-             build_wait(iid, icrc)
+             add_wait(iid, icrc, e, ss, rs, ax, ret);
+             build_wait(iid, icrc, ret)
           }
         }
       };
@@ -491,6 +515,7 @@ function process_inlined_verilog_inner(fnm, vlg, fp_exec, fp_wait,
                 'nonblocking'('var'('state'),'var'('S_CUSTOMWAIT')));
               ohashput(waits, id, emit_wait(e,ss,r))
             }
+          | inst_wait_return -> ccerror('UNIMPLEMENTED'(node))
          }
      }
   };

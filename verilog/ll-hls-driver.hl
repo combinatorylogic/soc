@@ -1,5 +1,7 @@
 %literate:
 
+\phcode{include "./extra.hl"}
+
 \subsection{Driver}
 
 \pfcode{
@@ -458,9 +460,9 @@ function ll_to_hls_driver(devenv, top0, pragmas, loops) {
    t1c = ll_to_hls_rename_phis(t1b, phirenames);
 
    ////////////////////////
-   //tmppp=gen_pprint_ast(hls0, bblock);
-   //prnt(t) = visit:hls0 /rec/ (top: t) {
-   //  once bblock { else -> println(tmppp(node())) }};
+   tmppp=gen_pprint_ast(hls0, bblock);
+   prnt(t) = visit:hls0 /rec/ (top: t) {
+     once bblock { else -> println(tmppp(node())) }};
    //println("---------------------------------T2c");
    //prnt(t1c);
    //println("---------------------------------");
@@ -470,9 +472,9 @@ function ll_to_hls_driver(devenv, top0, pragmas, loops) {
    t2  = ll_to_hls_mark_registers(aenv, t1c);
    
    t2a = ll_to_hls_mark_output(aenv, t2);
-   //println("---------------------------------PRE-T2ztmp");
-   //prnt(t2a);
-   //println("---------------------------------");
+   println("---------------------------------PRE-T2ztmp");
+   prnt(t2a);
+   println("---------------------------------");
 
    t2aa = ll_to_hls_lift_wires(t2a, 'nophis');
    //println("---------------------------------LIFT");
@@ -498,10 +500,10 @@ function ll_to_hls_driver(devenv, top0, pragmas, loops) {
    h4y = ll_to_hls_expand_commits(h4x);
    h4z = ll_to_hls_fill_op_starts(h4y);
    h4zz = ll_to_hls_zero_ack_regs(h4z);
-   //println("--------------O");
-   //prnt2=gen_pprint_ast(hls2, top);
-   //println(prnt2(h4zz));
-   //println("---------------------------------");
+   println("--------------O");
+   prnt2=gen_pprint_ast(hls2, top);
+   println(prnt2(h4zz));
+   println("---------------------------------");
    ret0 = ll_to_hls_lower_fsm(h4zz);
    ret2 = ll_to_hls_lower_mems(aenv, ret0);
    ret3 = ll_to_hls3_lower_insts(ret2);

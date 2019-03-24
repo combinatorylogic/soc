@@ -6,4 +6,9 @@
 .sram_out(sram_out),
 .vgaenable(vgaenable),
 
-  
+`ifdef ENABLE_SOUND
+.sound_clr_full(sound_clr_full),
+.sound_clr_sample(sound_clr_sample),
+.sound_clr_rate(sound_clr_rate),
+.sound_clr_req(sound_clr_req),
+`endif

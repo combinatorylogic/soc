@@ -259,3 +259,7 @@ endmodule // hls_MulFSM
 
 `include "vgafifo.v"
 `include "vga640x480ice.v"
+`ifdef ENABLE_SOUND
+ `include "soundctl.v"
+`endif
+

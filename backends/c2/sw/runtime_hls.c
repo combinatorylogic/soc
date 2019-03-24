@@ -41,7 +41,7 @@ inline int32 _IMUL(int32 a0, int32 b0)
 }
 */
 
-int32 _IMUL(int32 a0, int32 b0)
+inline int32 _IMUL(int32 a0, int32 b0)
 {
         inline verilog usemodule "./slowMul.v";
         inline verilog instance slowMul(ack = mul_ack,

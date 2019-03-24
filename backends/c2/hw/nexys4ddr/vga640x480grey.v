@@ -78,7 +78,7 @@ module vgagfx(input  clk,      // system clock (100mhz)
    assign hsync = ~((hcounter > hlen+hfp) & (hcounter < hlen+hfp+hpulse));
    assign vsync = ~((vcounter > vlen+vfp) & (vcounter < vlen+vfp+vpulse));
 
-   assign scan = vsync;
+   assign scan = vcounter == 0;
    
    assign visible = (hcounter < hlen)&&(vcounter < vlen);
    

@@ -349,3 +349,8 @@ module sevensegmm(input clk,
    assign addr = data_b_in[10:8];
 
 endmodule // sevensegmm
+
+`ifdef ENABLE_SOUND
+ `include "soundctl.v"
+`endif
+

@@ -24,3 +24,8 @@
       output        vsync,
 
 
+`ifdef ENABLE_SOUND            
+      // Audio PWM pin
+      output pwm_out,
+`endif
+            

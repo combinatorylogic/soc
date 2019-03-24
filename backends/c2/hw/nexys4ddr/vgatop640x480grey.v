@@ -4,12 +4,16 @@ module vram(input clk,
 	    
 	    input [19:0]     p1_addr,
 	    input [7:0]      p1_data,
-	    input 	     p1_we,
+            output [7:0] p1_data_out, 
+	    input            p1_we,
+            input            p1_re,
 
 	    input [19:0]     p2_addr,
 	    output reg [7:0] p2_data);
 
    reg [7:0] 		 mem[0:153600-1];
+
+   assign p1_data_out = mem[p1_addr];
 
    always @(posedge clk)
      begin
@@ -39,6 +43,8 @@ module vgatopgfx(input clk, // 100MHz clk
 	         input [19:0] vmem_in_addr,
 	         input [7:0]  vmem_in_data,
 	         input        vmem_we,
+                 input        vmem_re,
+                 output [7:0] vmem_p1_out_data,
 
                  output       vga_scan
                  );
@@ -63,6 +69,11 @@ module vgatopgfx(input clk, // 100MHz clk
    assign vmem_in_data_x = clsing?0:vmem_in_data_r;
    assign vmem_we_x = clsing|vmem_we_r;
 
+
+   wire                    vmem_re_x;
+   
+   
+   assign vmem_re_x = clsing?0:vmem_re;
    
 
    always @(posedge clk)
@@ -103,6 +114,10 @@ module vgatopgfx(input clk, // 100MHz clk
 
    assign vmem_out_data = buf1?vmem_out_data_1:vmem_out_data_2;
    
+   wire [7:0] vmem_p1_out_data_1;
+   wire [7:0] vmem_p1_out_data_2;
+
+   assign vmem_p1_out_data = buf2?vmem_p1_out_data_1:vmem_p1_out_data_2;
    
    
    vram vram1(.clk(clk),
@@ -110,6 +125,8 @@ module vgatopgfx(input clk, // 100MHz clk
 	      .p1_addr(vmem_in_addr_x),
 	      .p1_data(vmem_in_data_x),
 	      .p1_we(buf2?vmem_we_x:0),
+              .p1_re(buf2?vmem_re_x:0),
+              .p1_data_out(vmem_p1_out_data_1),
 
 	      .p2_addr(vmem_out_addr),
 	      .p2_data(vmem_out_data_1)
@@ -120,6 +137,8 @@ module vgatopgfx(input clk, // 100MHz clk
 	      .p1_addr(vmem_in_addr_x),
 	      .p1_data(vmem_in_data_x),
 	      .p1_we(buf1?vmem_we_x:0),
+              .p1_re(buf1?vmem_re_x:0),
+              .p1_data_out(vmem_p1_out_data_2),
 
 	      .p2_addr(vmem_out_addr),
 	      .p2_data(vmem_out_data_2)

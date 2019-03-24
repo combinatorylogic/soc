@@ -67,7 +67,11 @@ wire vga_clsack;
 wire [19:0] vmem_in_addr;
 
 wire [7:0] vmem_in_data;
+wire [7:0] vmem_p1_out_data;
+
 wire vmem_we;
+wire vmem_re;
+
 wire vmem_select;
 
 wire vmem_bufswap;
@@ -93,9 +97,30 @@ vgatopgfx vga1(.clk(clk),
                .vmem_in_addr(vmem_in_addr),
                .vmem_in_data(vmem_in_data),
                .vmem_we(vmem_we),
+               .vmem_re(vmem_re),
+               .vmem_p1_out_data(vmem_p1_out_data),
 
                .bufswap(vmem_bufswap),
                .vga_scan(vga_scan)
                );
 
-                
+`ifdef ENABLE_SOUND
+   wire            sound_clr_full;
+   wire [15:0]     sound_clr_sample;
+   wire [15:0]     sound_clr_rate;
+   wire            sound_clr_req;
+
+   assign aud_sd = 1;
+   
+   soundctl  sound1 ( .clk(clk),
+                      .rst(rst),
+                      .sound_clr_full(sound_clr_full),
+                      .sound_clr_sample(sound_clr_sample),
+                      .sound_clr_rate(sound_clr_rate),
+                      .sound_clr_req(sound_clr_req),
+                      .pwm_out(pwm_out)
+                      );
+
+
+  
+`endif
