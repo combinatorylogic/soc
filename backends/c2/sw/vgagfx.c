@@ -15,8 +15,8 @@ inline void _vmemdump()
 
 inline void _vmemwaitscan()
 {
-        inline verilog exec { vmem_bufswap <= vmem_bufswap; } wait (vga_scan) { vmem_bufswap <= ~vmem_bufswap; }
-        else { vmem_bufswap <= vmem_bufswap; };
+        inline verilog exec {  } wait (vga_scan) { vmem_bufswap <= ~vmem_bufswap; }
+        else {  };
 }
 
 

@@ -44,7 +44,8 @@ Given that most GEPs end up being used in a load or a store instruction, and
 most GEPs are adding a constant offset, they must be fused into load and store
 instructions directly (representing the new fused instructions with intrinsic
 calls). Still, those GEPs that end up being bitcasted to integers, passed as
-function arguments, etc., must be translated to a proper arithmetic.
+function arguments, etc., must be translated to a proper arithmetic, and probably
+get paraded through an SSA optimisations round again.
 
 We expect GEP pointer types to be resolved here.
 
@@ -356,6 +357,7 @@ ast ir2isa : ir2nossa () {
     | call(c2label:l)
     | touch(c2val:dst)
     | mov(c2val:src, c2val:dst)
+    | iret()
 
     // Nodes that appear only after the macro lowering:
     | ldimmed(c2val:dst, c2val:src)
@@ -420,6 +422,7 @@ function c2_is_intrinsic(fn) {
     | '_custom0_0b' -> true
     | '_custom0_1b' -> true
     | '_dbgreg' -> true
+    | '_iret' -> true
     | else -> return (parse (%S<<(fn)) as c2intrinsicfn) === 'i'
 }}
 
@@ -446,6 +449,7 @@ function c2_lower_intrinsic(dst, fn, args) {
     | %_custom0_0 -> ['aluop'('ext', 'reg'('R0'), 'reg'('R0'), 'reg'('R0'), noblk(car(args)))]
     | %_custom0_0b -> ['aluop'('ext', 'reg'('R0'), 'reg'('R0'), 'reg'('R0'), blk(car(args)))]
     | %_dbgreg -> ['dbgnop'(car(args))]
+    | %_iret -> ['iret'()]
     // TODO: more intrinsics
     | else -> ccerror('INTRINSIC'(fn))
    }}}
@@ -1014,6 +1018,7 @@ function c2_hazard_rules(i) collector(add, get) {
      | mov -> { dst('produce'); src('depends')}
      | touch -> {dst('depends');dst('produce');dst('touch')}
      | ret -> {add('depends'('SP')); add('jump'())}
+     | iret -> {add('jump'());}
      | jmp -> add('jump'())
      | call -> {add('depends'('SP')); add('jump'())}
      | jmpr -> add('jump'())

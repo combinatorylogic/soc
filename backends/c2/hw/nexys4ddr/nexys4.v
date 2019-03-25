@@ -40,8 +40,8 @@ module uartmm(input clk,
                .output_axis_tvalid(output_axis_tvalid),
                .output_axis_tready(output_axis_tready),
                
-               //  90MHz
-               .prescale(90000000/(115200*8)));
+               //  100MHz
+               .prescale(100000000/(115200*8)));
    
    assign strobe_b_next = (addr_b == 65537) | (addr_b == 65538) | (addr_b == 65539);
    assign data_b_next = (addr_b == 65537)?uart_valid_r:

@@ -12,6 +12,13 @@ Type B:   1 [ 0 0 ] [3:31 - 29xIMMED] - CALL/RET/JUMP (abs) - delay slots = 1
           1 [ 1 1 ] [3:7 - SRC$1] [8:12 - SRCR2] [13:31 IMMED] - CIJUMP - delay slots = 2
 Type I:   0 [ 1 ] [2:6 - DSTRG] [7:31 - 25xSIMMED] - LDIMMED
 
+          Since we have R0 and R1 hardwired to 0 and 1, we can assign special actions to 0 and 1 immediates (no use in C2).
+          One such action for C3 core is a return from an IRQ handler in C3. It's implemented trivially as
+          restoring the PC and disabling doing_irq register, with R0 beign a destination (to avoid actually writing it back).
+
+
+          i.e., IRET = 0b10
+
 Type E:   0 [ 0 0 1 1 1 1 ] [7:11 - DSTRG] [12:16 - SRCR1] [17:21 - SRCR2] [22:31 - 10xEXTCODE] - invoke an
     extended instruction
 Type EE:  0 [ 0 0 1 1 1 1 ] [7:11 - DSTRG] [12:16 - SRCR1] [17:21 - SRCR2] [22:31 - 10x 1] - EXTCODE is in the
@@ -37,7 +44,7 @@ Reg mapping:
    R31 = PC (hardwired, not in the reg file)
 
 Type A opcodes:
-   0: NOP // disables writeback
+   0: NOP (bubble) // disables writeback
    1: AND
    2: ADD (+SIMMED)
    3: SUB (+SIMMED)

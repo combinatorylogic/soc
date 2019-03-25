@@ -1,4 +1,32 @@
 
+module smallfifo16x(input rst,
+		 
+		   input         clk_in,
+		   input [15:0]  fifo_in,
+		   input         fifo_en,
+
+		   output        fifo_full,
+
+		   input         clk_out,
+		   output [15:0] fifo_out,
+		   output        fifo_empty,
+		   input         fifo_rd);
+
+
+   vga_fifo_dc#(.AWIDTH(4),.DWIDTH(16)) 
+   fifo0(.rclk (clk_out),
+         .wclk (clk_in),
+         .rclr (~rst),
+         .wclr (~rst),
+         .wreq (fifo_en),
+         .d (fifo_in),
+         .rreq (fifo_rd),
+         .q (fifo_out),
+         .empty (fifo_empty),
+         .full (fifo_full));
+   
+   
+endmodule
 
 module soundctl (input clk,
                  input        rst,
@@ -15,8 +43,7 @@ module soundctl (input clk,
    wire                       fifo_empty;
    reg                        fifo_rd;
 
-   smallfifo16 fifo1(.rst(rst),
-                   
+   smallfifo16x fifo1(.rst(rst),
                      .clk_in(clk),
                      .fifo_in(sound_clr_sample),
                      .fifo_en(sound_clr_req),
@@ -35,8 +62,7 @@ module soundctl (input clk,
        fifo_rd <= 0;
        counter <= 0;
        pwm_out <= 0;
-       have_sample <= 0;
-       sample <= 255;  // 50% duty cycle default level
+       sample <= 1024;  // 50% duty cycle default level
     end else begin
        pwm_out <= (counter < sample)?1:0;
        if (fifo_rd) begin
@@ -47,7 +73,7 @@ module soundctl (input clk,
           counter <= 0;
           if (~fifo_empty) fifo_rd <= 1; else  begin
              fifo_rd <= 0;
-             sample <= 255;
+             sample <= 1024;
           end
        end else begin
           fifo_rd <= 0;

@@ -255,7 +255,7 @@ It's planned to add support for:
 * Asynchronous operation of the synthesised modules (i.e., not necessarily driven by `REQ/ACK`)
 * More pragmas for a fine control over synthesis
 * Explicit parallelism
-* Special handling for the entry level if chains - e.g., to be able to have both a prefill FSM and a pipeline in a single kernel.
+* Special handling for the entry level `if` chains - e.g., to be able to have both a prefill FSM and a pipeline in a single kernel.
 * A transparent verilog fallback - reuse the existing inline functionality here.
 * Function calls (not necessarily with inlining), but still no recursion
 * Change the scheduling priorities - move everything as much down as possible to avoid needless pipeline registers propagation. This applies to things like loop induction variables, for example, if they're not used inside the loop body.

@@ -27,6 +27,7 @@ ast c2asm {
          | ret()
          | touch(reg:dst)
          | mov(reg:src, reg:dst)
+         | iret()
          ;
     reg is (.rnumber:id);
     expr  = const(number:n)
@@ -150,6 +151,7 @@ function c2macros(src) {
          once instr {
             call -> 'jmp'(lbl)
           | ret -> 'jmp'('zero'())
+          | iret -> 'ldimmed'('R0', 'zero'())
           | touch -> 'aluop'('add', dst, 'R0', dst, 'zero'())
           | mov -> 'aluop'('add', src, 'R0', dst, 'zero'())
           | else -> node}}}}}

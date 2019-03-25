@@ -98,9 +98,34 @@ NET "RP_SPI_CE0N" LOC = "P79" | IOSTANDARD = LVTTL;
 
 
 
-# PMOD1 / ARD Dx pins for VGA
+#pmod1 upper row:  6 8 10 12  - blue
+#                  0 1 2  3
 
-#NET "D1" LOC="P5" | IOSTANDARD = LVTTL; 
-NET "D2" LOC="P88" | IOSTANDARD = LVTTL;  # HSYNC
-NET "D3" LOC="P92" | IOSTANDARD = LVTTL;  # MONO
-NET "D4" LOC="P93" | IOSTANDARD = LVTTL; # VSYNC
+#      lower row:  5 7 9  11  - red
+#                  4 5 6  7
+
+
+#pmod2 upper row:  6 8 10 12   - 0 0 vs hs
+#                  3 2 1  0
+
+#      lower row:  5 7 9  11  - green
+#                  4 5 6  7
+
+##PMOD1#############################################################################
+NET "PMOD1<0>" 			LOC = "P5" 			| IOSTANDARD = LVTTL;
+NET "PMOD1<1>" 			LOC = "P2" 			| IOSTANDARD = LVTTL;
+NET "PMOD1<2>" 			LOC = "P1" 			| IOSTANDARD = LVTTL;
+NET "PMOD1<3>" 			LOC = "P16" 		| IOSTANDARD = LVTTL;
+NET "PMOD1<4>"				LOC = "P88" 		| IOSTANDARD = LVTTL;
+NET "PMOD1<5>" 			LOC = "P92" 		| IOSTANDARD = LVTTL;
+NET "PMOD1<6>" 			LOC = "P93" 		| IOSTANDARD = LVTTL;
+NET "PMOD1<7>" 			LOC = "P94" 		| IOSTANDARD = LVTTL;
+##PMOD2#############################################################################
+NET "PMOD2<0>" 			LOC = "P142" 		| IOSTANDARD = LVTTL;
+NET "PMOD2<1>" 			LOC = "P141" 		| IOSTANDARD = LVTTL;
+NET "PMOD2<2>" 			LOC = "P15" 		| IOSTANDARD = LVTTL;
+NET "PMOD2<3>" 			LOC = "P14" 		| IOSTANDARD = LVTTL;
+NET "PMOD2<4>" 			LOC = "P144" 		| IOSTANDARD = LVTTL;
+NET "PMOD2<5>" 			LOC = "P143" 		| IOSTANDARD = LVTTL;
+NET "PMOD2<6>" 			LOC = "P140" 		| IOSTANDARD = LVTTL;
+NET "PMOD2<7>" 			LOC = "P139" 		| IOSTANDARD = LVTTL;

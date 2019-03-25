@@ -4,7 +4,7 @@ module vram(input clk,
 	    
 	    input [19:0]     p1_addr,
 	    input [7:0]      p1_data,
-            output [7:0] p1_data_out, 
+            output reg [7:0] p1_data_out, 
 	    input            p1_we,
             input            p1_re,
 
@@ -13,13 +13,14 @@ module vram(input clk,
 
    reg [7:0] 		 mem[0:153600-1];
 
-   assign p1_data_out = mem[p1_addr];
 
    always @(posedge clk)
      begin
 	if (p1_we) begin
 	   mem[p1_addr] <= p1_data;
-	end
+	end else if (p1_re) begin
+           p1_data_out <= mem[p1_addr];
+        end
 	p2_data <= mem[p2_addr];
      end
 
@@ -137,7 +138,7 @@ module vgatopgfx(input clk, // 100MHz clk
 	      .p1_addr(vmem_in_addr_x),
 	      .p1_data(vmem_in_data_x),
 	      .p1_we(buf1?vmem_we_x:0),
-              .p1_re(buf1?vmem_re_x:0),
+              .p1_re(buf2?vmem_re_x:0),
               .p1_data_out(vmem_p1_out_data_2),
 
 	      .p2_addr(vmem_out_addr),

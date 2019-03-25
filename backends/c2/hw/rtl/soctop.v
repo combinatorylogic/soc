@@ -19,6 +19,8 @@
      65553: 7-segment display (WRITE)
  
  */
+`include "defines.v"
+
 
 module c2soc(input sys_clk_in,
              
@@ -171,7 +173,7 @@ endmodule // halt
 module clockcounter(input clk,
                     input            rst,
               
-                    output [31:0]    data_a,
+                    input [31:0]    data_a,
                     input [31:0]     addr_a,
               
                     output reg [31:0] data_b,

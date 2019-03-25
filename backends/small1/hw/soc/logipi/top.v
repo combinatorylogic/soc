@@ -81,7 +81,8 @@ module small1soc(
                  input [1:0]   PB,
                  input [1:0]   SW,
 
-		 output D4, D2, D3, // HSYNC, VSYNC, MONO
+		 output [7:0] PMOD1,
+                 output [7:0] PMOD2,
 `else
                  input sys_reset,
 `endif
@@ -95,7 +96,7 @@ module small1soc(
                  // SDRAM interface
                  output        SDRAM_CLK,
                  output        SDRAM_CKE,
-                 output        SDRAM_CS,
+                 //output        SDRAM_CS,
                  output        SDRAM_nRAS,
                  output        SDRAM_nCAS,
                  output        SDRAM_nWE,
@@ -202,15 +203,23 @@ module small1soc(
    reg 				  vmem_we;
    wire                           clku25mhz;
    wire                           clk25mhz;
-   
+  
+   // Using a nice Digilent PmodVGA instead of my abominable contraption
+   wire                           vgamono;
+
+   assign PMOD1[3:0] = {vgamono,vgamono,vgamono,vgamono}; // blue
+   assign PMOD1[7:4] = {vgamono,vgamono,vgamono,vgamono}; // red
+   assign PMOD2[3:0] = {vgamono,vgamono,vgamono,vgamono}; // green
+   assign PMOD2[6] = 0;
+   assign PMOD2[7] = 0;
    
    vgatop vga1(.clk(clk100mhz),
 	       .rst(cpu_reset),
 	       .clk25mhz(clk25mhz),
 
-	       .hsync(D4),
-	       .vsync(D2),
-	       .rgb(D3),
+	       .hsync(PMOD2[4]),
+	       .vsync(PMOD2[5]),
+	       .rgb(vgamono),
 
 	       .vmem_in_addr(vmem_in_addr),
 	       .vmem_in_data(vmem_in_data),
@@ -218,6 +227,8 @@ module small1soc(
 `endif
 
 `ifndef BLOCKRAM
+   wire                           SDRAM_CS;
+   
 
    SDRAM_Controller
      #(
