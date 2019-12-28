@@ -29,14 +29,16 @@
 `endif
 
 `ifndef ICE
+`ifndef CYCLONEV
  `define REGFILE_REGISTERED_OUT 1
+`endif
 `endif
 
 // Uncomment this to disable microops support (CALL/RET)
 
 // `define DISABLE_MICROOPS 1
 
-// `define ENABLE_BARREL_SHIFTER 1
+`define ENABLE_BARREL_SHIFTER 1
 
 /* ISA encoding: see core.txt */
 
@@ -91,7 +93,7 @@
  */
 
 `ifdef ENABLE_EXT
- `IPATH(c2_custom_include.v)
+`IPATH(c2_custom_include.v)
 `endif
 
 
@@ -108,18 +110,29 @@ module `CPUNAME
 
            input [31:0]  ram_data_in_a,
            output [31:0] ram_addr_in_a,
-           input [31:0]  ram_data_in_b,
-           output [31:0] ram_addr_in_b,
-           output [31:0] ram_data_out_b,
-           output        ram_we_out,
 
-           /**************************/
-           // TODO: also include hoisted external signals
-           `IPATH(soccpusignals.v)
+           input [31:0]  xram_data_in_b,
+           output [31:0] xram_addr_in_b,
+           output [31:0] xram_data_out_b,
+           output        xram_we_out,
+                         /**************************/
+                         // TODO: also include hoisted external signals
+                         `IPATH(soccpusignals.v)
            /**************************/
 
            input         stall_cpu // external stall
            );
+
+`ifndef SIMULATION
+   wire [4:0] dbgreg;
+   wire       dbgreg_en;
+   assign dbgreg_en = 0;
+`else
+   reg [4:0]  dbgreg = 0;
+   reg 	      dbgreg_en = 0;
+`endif
+   
+   
 
    //---------------------------------------------------
    //--1. Clock counter, for debugging and perf counters
@@ -137,15 +150,38 @@ module `CPUNAME
    wire           stall;
    wire           stall_but_ext;
    reg            unstall;
+  
+   wire           stall_extra;
+ 
+   wire [31:0]   ram_data_in_b;
+   
+   wire [31:0]   ram_addr_in_b;
+   
+   wire [31:0]   ram_data_out_b;
+   
+   wire          ram_we_out;
+   
+`ifdef ENABLE_COMMON_EXTRAS
+   // This file must provide at least ram port b and stall_extra wires
+ `include "cpuextra.v"
+`else
+   // When extras are enabled, additional logic may want to highjack
+   // ram port b
+   assign ram_data_in_b = xram_data_in_b;
+   assign xram_addr_in_b = ram_addr_in_b;
+   
+   assign xram_data_out_b = ram_data_out_b;
+   assign xram_we_out = ram_we_out;
+   
+   assign stall_extra = 0;
+`endif
    
    
-   
-   assign stall = stall_cpu | stall_exec | stall_mem; // ?!?
+   assign stall = stall_cpu | stall_exec | stall_mem | stall_extra; // ?!?
    assign stall_but_ext = 0; // ?!?
    assign stall_mem = 0;
-   
 
-   
+
    //------------------------------------------------
    //--2. FETCH logic--------------------------------
    //------------------------------------------------
@@ -900,11 +936,6 @@ module `CPUNAME
 
    // Input port address, data and WE are formed in the end of WB stage
 
-   wire [4:0] dbgreg;
-   wire       dbgreg_en;
-   assign dbgreg_en = 0;
-   
-   
    regfile #(
 `ifndef DISABLE_MICROOPS
              .MICROOPS_ENABLED(1)

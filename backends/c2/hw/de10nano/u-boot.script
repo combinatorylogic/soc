@@ -1,0 +1,5 @@
+fatload mmc 0:1 $fpgadata soc_system.rbf;
+fpga load 0 $fpgadata $filesize;
+run bridge_enable_handoff;
+mw 0xFF709004 0x01000000 1;
+mw 0xFF709000 0x01000000 1;

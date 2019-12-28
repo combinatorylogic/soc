@@ -45,7 +45,7 @@ void mand_core(int32 cx, int32 cxstep, int32 cy, int.4 *counters)
 }
 
 
-inline void _vmemsetrowpos(uint32 pos)
+void _vmemsetrowpos(uint32 pos)
 {
         inline verilog define { reg [31:0] vmemrowpos;};
         inline verilog define { reg [31:0] rowbcount;};
@@ -57,7 +57,7 @@ inline void _vmemsetrowpos(uint32 pos)
 
 /* We have a string of 36 pixels out of 4 mandelbrot cores, which
    amounts to writing 18 bytes into vram, in 18 clock cycles. */
-inline void _vmemdirect(uint32 pos)
+void _vmemdirect(uint32 pos)
 {
         inline verilog define { reg [(4 * 9 * 4 - 1):0] bytes4; };
         inline verilog define { reg [4:0] vmembcount; };
@@ -233,7 +233,7 @@ void bootentry()
         _testhalt();
         // Avoid a VGA flicker and tearing
         _vmemwaitscan();
-        _vmemswap();
+        //        _vmemswap();
  	goto loopZ;
 }
 

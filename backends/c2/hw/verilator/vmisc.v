@@ -213,6 +213,135 @@ module mul16x16 (input [15:0]      a,
    
 endmodule // mul16x16
 
+`include "../rtl/fpmult.v"
+`include "../rtl/fpmult_m2.v"
+`include "../rtl/fpint_3.v"
+`include "../rtl/fp2intp.v"
+`include "../rtl/fpadd_sub.v"
+`include "../rtl/fpdiv.v"
+/// fpmult_m2 for a 1 cycle longer version
+`define FMUL_MODULE fpmult
+
+
+// 4 clock cycles to result
+module hls_FMul(input         clk,
+                input         reset,
+                input [31:0]  p0,
+                input [31:0]  p1,
+                output [31:0] out);
+
+   `FMUL_MODULE mul1(.clk(clk),
+                    .rst(reset),
+                    .a(p0),
+                    .b(p1),
+                    .res(out));
+
+endmodule // hls_FPMul
+
+module hls_FDiv(input clk,
+                 input         reset,
+                 input [31:0]  p0,
+                 input [31:0]  p1,
+                 output [31:0] out);
+
+   fpdiv div1(.clk(clk),
+              .rst(reset),
+              .a(p0),
+              .b(p1),
+              .res(out));
+
+endmodule // hls_FDiv
+
+
+// 3 clock cycles to result
+module hls_FAdd(input clk,
+                 input         reset,
+                 input [31:0]  p0,
+                 input [31:0]  p1,
+                 output [31:0] out);
+
+   fpadd_sub a(.clk(clk),
+               .rst(reset),
+               .sub(1'b0),
+               .a(p0),
+               .b(p1),
+               .res(out));
+   
+endmodule // hls_FPAdd
+
+// 3 clock cycles
+module hls_FSub(input clk,
+                 input         reset,
+                 input [31:0]  p0,
+                 input [31:0]  p1,
+                 output [31:0] out);
+
+   fpadd_sub a(.clk(clk),
+               .rst(reset),
+               .sub(1'b1),
+               .a(p0),
+               .b(p1),
+               .res(out));
+   
+endmodule // hls_FPAdd
+
+
+// combinatorial fp comp, immediate result
+
+module hls_OGT(input clk,
+                 input        reset,
+                 input [31:0] p0,
+                 input [31:0] p1,
+                 output       out);
+
+   wire [30:0]                 m_p0;
+   wire [30:0]                 m_p1;
+   wire                        s_p0;
+   wire                        s_p1;
+   wire                        gr;
+   
+
+   assign s_p0 = p0[31];
+   assign m_p0 = p0[30:0];
+
+   assign s_p1 = p1[31];
+   assign m_p1 = p1[30:0];
+
+    
+   assign gr = m_p0 > m_p1; // we don't care about equivalence?
+
+   assign out = (s_p0&s_p1)?~gr:
+                (s_p0)?0:
+                (s_p1)?1:gr;
+      
+endmodule // hls_OGT
+
+// 3 cycle int to float converter
+module hls_SIToFP(input clk,
+                  input         reset,
+                  input [31:0]  p0,
+                  output [31:0] out);
+
+   int_to_float a(.clk(clk),
+                  .rst(reset),
+                  .a(p0),
+                  .fl(out));
+
+endmodule
+  
+module hls_FPToSI(input clk,
+                  input         reset,
+                  input [31:0]  p0,
+                  output [31:0] out);
+
+   flt2int32 a(.clk(clk),
+               .rst(reset),
+               .a(p0),
+               .z(out));
+
+endmodule
+  
+  
 
 module hls_Mul(input clk,
                input reset,
@@ -299,6 +428,7 @@ endmodule
 
 
 `include "../rtl/mul.v"
+//`include "../rtl/flt_hls_mul.v"
 
 
 module hls_MulFSM(input clk,
@@ -319,4 +449,100 @@ module hls_MulFSM(input clk,
                    .out(out));
 
 endmodule // hls_MulFSM
+
+module hls_FAddFSM(input clk,
+               input         reset,
+               input         req,
+               output        ack,
+                  
+               input [31:0]  p0,
+               input [31:0]  p1,
+               output [31:0] out);
+
+    fpadd_sub a(.clk(clk),
+                .rst(reset),
+                .sub(1'b0),
+                .a(p0),
+                .b(p1),
+                .res(out));
+
+   tick #(.count(3)) t0 (.clk(clk), .reset(reset), .req(req), .ack(ack));
+
+endmodule
+
+
+module hls_FSubFSM(input clk,
+               input         reset,
+               input         req,
+               output        ack,
+                  
+               input [31:0]  p0,
+               input [31:0]  p1,
+               output [31:0] out);
+
+    fpadd_sub a(.clk(clk),
+                .rst(reset),
+                .sub(1'b1),
+                .a(p0),
+                .b(p1),
+                .res(out));
+
+   tick #(.count(3)) t0 (.clk(clk), .reset(reset), .req(req), .ack(ack));
+
+endmodule
+
+
+module tick (input clk,
+             input      reset,
+             input      req,
+             output reg ack);
+   parameter count = 4;
+
+   reg [4:0]       ccounter;
+
+   always @(posedge clk) begin
+      if (~reset) begin
+         ccounter <= 0;
+         ack <= 0;
+      end else if (req) begin
+         ccounter <= 1; ack <= 0;
+      end else if (ccounter) begin
+         ccounter <= ccounter + 1;
+         if (ccounter == count) begin
+            ccounter <= 0;
+            ack <= 1;
+         end
+      end else ack <= 0;
+   end
+
+endmodule
+
+
+
+module hlsblockram (input         clk,
+                    
+                    input [ABITWIDTH-1:0]      readaddr1,
+                    output reg [BITWIDTH-1:0] readout1,
+                    input [ABITWIDTH-1:0]      writeaddr1,
+                    input [BITWIDTH-1:0]      writein1,
+                    input                     we
+                    );
+   
+
+   parameter SIZE = 32;
+   parameter BITWIDTH = 32;
+   parameter ABITWIDTH = 32;
+   
+   reg [BITWIDTH-1:0] mem [0:SIZE-1];
+ 
+   // Expect 2-port (1ro+1wo) to be inferred
+   always @(posedge clk)
+     begin
+        if (we) begin
+           mem[writeaddr1] = writein1;
+        end
+        readout1 <= mem[readaddr1];
+     end
+
+endmodule // toyblockram
 

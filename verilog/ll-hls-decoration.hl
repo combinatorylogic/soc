@@ -6,7 +6,7 @@ The next step is to decorate our IR with some boilerplate:
 generate REQ and ACK signals, replace terminal instructions with if and goto statements, etc.
 
 \pfcode{
-function ll_to_hls_lower_hls1(top) {
+function ll_to_hls_lower_hls1(top, bare_p) {
    bit = with target(hls2) {mk:type:v(1)};
    zero = with target(hls2) {mk:value:const(0, bit)};
    one = with target(hls2) {mk:value:const(1, bit)};
@@ -67,8 +67,9 @@ function ll_to_hls_lower_hls1(top) {
    // Process FSMs
    visit:hls1 /rec, dst hls2/ (top: top) {
       deep top {
-         module -> mk:top:module(args = args :: [mk:modarg:ain('REQ', bit);
-                                                 mk:modarg:aoutreg('ACK', bit)])};
+         module -> mk:top:module(args = args :: if(bare_p) [] else
+                                                 [mk:modarg:ain('REQ', bit);
+                                                  mk:modarg:aoutreg('ACK', bit)])};
       once modentry {
          fsm -> dofsm(node(), nm === 'default')
        | pipeline -> dofsm(node(), [])

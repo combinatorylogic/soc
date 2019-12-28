@@ -54,6 +54,10 @@ magnitude faster than Small1 but still is relatively simple. There will be a
 more complex version of the same ISA with a support for caches, DDR and
 interrupts, eventually replacing Small1.
 
+A version of "c2" core with instruction and data caches and interrupt support is called "c3", it
+can be used as a main SoC CPU driving the I/O channels and orchestrating a network of 
+minion c2 CPUs.
+
 
 # BUILDING
 

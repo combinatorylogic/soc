@@ -1,47 +1,78 @@
 % literate:
 
+
 \subsection{Special blocks expansion}
+
+
+\pfcode{
+
+syntax in expr, start:
+  'xsymbols "(" cslist<[mdqvarident],",">:args ")" [expr]:body'
+{
+   ('begin':(map a in args do {
+               sa = 'var'(cadr(a));
+               `::varid \a\ = egensym(\sa\)`})) :: [body]
+}
+
+#(macro egensym (id) `(efgensym ',id))
+
+#(function efgensym (id) (Sm<< id "_" (gensym)))
+
+}
 
 
 This one is horrible, it clearly need to be broken into few smaller stages instead.
 
 \pfcode{
 function ll_to_hls_extend_outputs(top) {
-   rdepth = mkref([]);
+   rdepth = mkref(1); rwdepth = mkref(1);
    getdepth() =
      visit:hls2 /rec/ (top: top) {
        once specentry {
           enqueue_once -> {
              rdepth := depth}
        |  enqueue_loop -> {
+             if (onecyclep) rwdepth := 1 else rwdepth := depth;
              rdepth := depth}
        |  else -> []}};
    getdepth();
    outputs = mkhash();
    depth = ^rdepth;
+   wdepth = ^rwdepth;
    getwidth(t) =
       visit:hls2 /rec/ (type: t) {
          once type { v -> bits }};
-   if (depth)
-     outputs:
+   outputs:
        visit:hls2 /rec/ (top: top) {
+         deep top {
+           module -> {
+             ll_hls_md_register_depth(nm, depth);
+             ll_hls_md_register_args(nm, args);
+             node()
+           }
+         | else -> node()
+         };
          once modentry {
            register -> {  // repeats aout
              aif(chk = ohashget(outputs, nm)) {
-               mk:node(t = mk:v(chk * depth))
+               mk:node(t = mk:v(chk * wdepth))
              } else node()}
          | else -> node()};
          once modarg {
             aout -> {
               w = getwidth(tp);
               ohashput(outputs, nm, w);
-              mk:node(tp = mk:v(w * depth))}
+              mk:node(tp = mk:v(w * wdepth))}
+         |  aoutreg -> if (nm === 'ACK') node() else {
+              w = getwidth(tp);
+              ohashput(outputs, nm, w);
+              mk:node(tp = mk:v(w * wdepth))}
          |  else -> node()}}
-   else []:top}}
+   }}
 
 
 \pfcode{
-function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee) {
+function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee, onecyclep) {
    getreg(v) =
       visit:hls2 /rec/ (value: v) {
         once value {
@@ -51,7 +82,7 @@ function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee) {
       deep reissuereg {
          r -> [nm;tp;init;step]};
       deep specentry {
-        enqueue_loop -> symbols (isidle, isentry, thrcount, livecnt, thrlive, loopexitcnd, isoutput) {
+        enqueue_loop -> xsymbols (isidle, isentry, thrcount, livecnt, thrlive, loopexitcnd, isoutput) {
            // Loop control FSM generation:
            // 1. IDLE stage - zero all the registers. If REQ, set INIT=1 and go to LOOP stage
            // 2. LOOP:
@@ -221,37 +252,66 @@ function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee) {
                           mk:begin([
                                 mk:set(isidle, mk:v(mk:const(1, mk:v(1))));
                                 /*mk:display("EXIT AT %d", [mk:reg(isentry)]);*/
-                                mk:set('ACK', mk:v(mk:const(1, mk:v(1))))]),
+                                @if (not(onecyclep)) 
+                                   [mk:set('ACK', mk:v(mk:const(1, mk:v(1))))]
+                                else []
+                                ]),
                           mk:begin([mk:nop()]))]};
            // Emit isentry and isidle
            addentry(mk:modentry:register(mk:v(1), isentry));
            addentry(mk:modentry:register(mk:v(1), isidle));
 
-           accumulate = {
-              // Accumulate the current thread output, if:
-              //   - entry or thread was alive, but the exit condition failed
-              // We're extracting the assignment from the final instructions
-              // Only assignments to the ouput registers are allowed there, anything else
-              // triggers an error.
-              getoutdefs() =
+           getoutdefs() =
                 collector(add, get) {
                   iter i in final do
                      visit:hls2 /rec/ (instr:i) {
                        deep instr {
-                          a ->
+                          a -> {
+                            println('GODF-A'(outputs, reg));
                             aif(chk = ohashget(outputs, reg))
                                add([reg;chk;op])
-                            else ccerror('NON-OUTPUT-ASSIGNMENT-IN-REISSUE'())
+                            else ccerror('NON-OUTPUT-ASSIGNMENT-IN-REISSUE'())}
                         | z -> ccerror('ILLEGAL-INSTRUCTION-IN-REISSUE'())};
                        deep value {
                           reg -> {  // If it's a header phi register, we have to refer to its _next value
                                     // here instead.
+                            println('GODF-REG'(id));
                             aif(chk = ohashget(rregsht, id)) mk:reg(chk) else node()}
                         | else -> node()};
                        deep iop {
                           v -> v
                         | else -> ccerror('ILLEGAL-INSTRUCTION-IN-REISSUE'())}};
                   return get()};
+                  
+           // If a single-cycle output protocol is configured - out register
+           // is combined with threadid, and ACK is raised as many times as
+           // many threads have finished (i.d., exactly the DEPTH number of ACKs)
+           onecycleout() = {
+              outs = getoutdefs();
+              println('OUTDEFS='(outs));
+              (map [reg;w;v] in outs do {
+                 nextnm = %Sm<<(reg, "_next");
+                 thridwidth = 8;
+                 addentry(mk:modentry:wire(mk:v(w + thridwidth), nextnm));
+                 
+                 addentry(mk:modentry:assign(nextnm,
+                    mk:e(mk:op('compose', [mk:reg(getreg(thrid));v],
+                         mk:v(w + thridwidth)))));
+                         
+                 mk:stmt:set(reg, mk:v(mk:reg(nextnm)))
+              })  :: [
+                 mk:stmt:if(mk:v(mk:reg(isoutput)),
+                               mk:set('ACK', mk:v(mk:const(1, mk:v(1)))),
+                               mk:set('ACK', mk:v(mk:const(0, mk:v(1)))))
+              ]
+           };
+
+           accumulate() = {
+              // Accumulate the current thread output, if:
+              //   - entry or thread was alive, but the exit condition failed
+              // We're extracting the assignment from the final instructions
+              // Only assignments to the ouput registers are allowed there, anything else
+              // triggers an error.
               outs = getoutdefs();
               iter [reg;w;v] in outs do {
                  nextnm = %Sm<<(reg, "_next");
@@ -316,7 +376,7 @@ function ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee) {
                  mk:stmt:begin(
                   // LOOP stage
                   [@increments;
-                   @accumulate;
+                   @if (onecyclep) onecycleout() else accumulate();
                    @checkexit
                   ]))]);
              
@@ -338,9 +398,9 @@ collector (addentry, getentries) {
         | else -> ccerror('NOPE'())}};
    visit:hls2 /rec, dst hls3/ (specentry: ee) {
       once specentry {
-        enqueue_loop -> ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee)
+        enqueue_loop -> ll_to_hls_unroll_enqueue_loop(addentry, outputs, ee, onecyclep)
       | enqueue_once ->
-          symbols(isidle, isissue, isassemble,
+          xsymbols(isidle, isissue, isassemble,
                   issuecount, acccount, nextthrid,
                   nextissuecount) {
            enqueue_reset =
@@ -437,10 +497,11 @@ collector (addentry, getentries) {
                            ss = [ // Thread assembly process
                              mk:set(acccount, mk:op('Add', [mk:reg(acccount); mk:const(1, mk:v(32))], mk:v(32)))
                            ]),
-                         mk:stmt:begin( // Assembled, set ACK and go to idle
-                           ss = [
-                              mk:set('ACK', mk:v(mk:const(1, mk:v(1))))
-                           ]))])));
+                          mk:stmt:begin( // Assembled, set ACK and go to idle
+                            ss = [
+                               mk:set('ACK', mk:v(mk:const(1, mk:v(1))))
+                            ])
+                        )])));
                      
            a1 = mk:modentry:always(
               mk:if(mk:op('NOT',[mk:reg('reset')], mk:v(32)),

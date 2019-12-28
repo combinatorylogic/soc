@@ -5,6 +5,10 @@
 \subsection{Driver}
 
 \pfcode{
+define ll_hls_config_ramsignals = mkref([])
+}
+
+\pfcode{
 function ll_to_hls_expand_commits(top) {
   commits = mkhash();
   mkcommits() = {
@@ -79,6 +83,11 @@ function ll_to_hls_zero_ack_regs(top) {
 
 \pfcode{
 function ll_to_hls_lower_fsm(top) {
+  dopipelinebody(addm, pipeid, body) = {
+     visit:hls3 /rec/ (stmt: body) {
+          deep stmt {
+             load_start -> mk:stmt:load_start_p(pipelineid = pipeid)
+           | else -> node()}}};
   dofsmbody(stagereg, tp, ssmap, body) = {
      dofsmstage(thisstage, s) = {
        visit:hls3 /rec/ (stmt: s) {
@@ -132,10 +141,12 @@ function ll_to_hls_lower_fsm(top) {
                                               fsmbody)
                                     ));
                   return [@getm(); ret]}
-      | xpipeline ->
-          [mk:modentry:always(
+      | xpipeline -> collector(addm, getm) {
+          nbody = dopipelinebody(addm, nm, body);
+          [
+           mk:modentry:always(
              mk:if(mk:op('NOT',[mk:reg('reset')], mk:v(32)),
-                                     reset, body))]
+                                     reset, nbody))]}
       | special ->
           ll_to_hls_unroll_enqueue(outputsht, v)
       | else -> [node()]};
@@ -149,38 +160,96 @@ function ll_to_hls_lower_mems(aenv, top) {
   //    Lift the ram instances
   rs = map append r in ohashget(aenv, '*RAMS*') do
           match r with
-             [id; alloca(tp, sz)] -> [[id; sz; ll_to_hls_gettype(tp)]]
+             [id; alloca([tp; sz],@varname)] -> [[id; sz; ll_to_hls_gettype(tp);@varname]]
            | else -> [];
   i32 =  with target (hls3) {mk:type:v(32)};
   ramsh = mkhash();
+  getmodname(t) = visit:hls3 /rec/ (top: t) { once top { module -> nm | else -> []}};
+  modnm = getmodname(top);
   getsize(t) = visit:hls3 /rec/ (type: t) {once type { v -> bits }};
-  newtops = collector(addelt, getelts) {
-    iter [id;sz;w] in rs do with target (hls3) {
-       readaddr1 = gensym();
-       readout1 = gensym();
-       writeaddr1 = gensym();
-       writein1 = gensym();
-       we = gensym();
+  outersignals = mkref([]);
+ <[newtops;newsignals]> =
+   collector(addelt, getelts)
+   collector(addsig, getsigs) {
+    iter [id;sz;w;@varname] in rs do with target (hls3)
+    symbols(readaddr1, readout1, writeaddr1, writein1, we, twriteaddr1, twritein1, twe) {
        ohashput(ramsh, id, [[w; i32]; [readaddr1; readout1]; [writeaddr1; writein1]; we]);
        addelt(mk:modentry:wire(w, readout1));
        addelt(mk:modentry:wire(w, writein1));
+
        // TODO: calculate address bit width
        addelt(mk:modentry:wire(i32, readaddr1));
        addelt(mk:modentry:wire(i32, writeaddr1));
        addelt(mk:modentry:wire(mk:v(1), we));
-       addelt(mk:modentry:ram(id, getsize(w), sz,
+
+       if (varname) symbols (twriteaddr1, twritein1, twe) {
+         vn = car(varname);
+         outer_we = %Sm<<("array_", vn, "_we");
+         outer_writeaddr = 'array_addr';
+         outer_writein = 'array_data';
+         addelt(mk:modentry:wire(w, twritein1));
+         addelt(mk:modentry:wire(i32, twriteaddr1));
+         addelt(mk:modentry:wire(mk:v(1), twe));
+
+         if (^ll_hls_config_ramsignals) {
+
+           if (not(^outersignals)) {
+             // TODO: data width must be the maximum of all array widths
+             addsig(mk:modarg:ain(outer_writein, w));
+             addsig(mk:modarg:ain(outer_writeaddr, i32));
+             outersignals := 1;
+             ll_hls_md_register_ram(modnm, vn, [[outer_writein;w];[outer_writeaddr;i32];  
+                                                [outer_we;mk:type:v(1)]]);
+           } else {
+             ll_hls_md_register_ram(modnm, vn, [[outer_we;mk:type:v(1)]]);
+           };
+           addsig(mk:modarg:ain(outer_we, mk:v(1)));
+
+           addelt(mk:modentry:assign(twriteaddr1,
+                                   mk:e(mk:select(mk:reg(outer_we),
+                                                  mk:reg(outer_writeaddr),
+                                                  mk:reg(writeaddr1)))));
+           addelt(mk:modentry:assign(twritein1,
+                                   mk:e(mk:select(mk:reg(outer_we),
+                                                  mk:reg(outer_writein),
+                                                  mk:reg(writein1)))));
+           addelt(mk:modentry:assign(twe,
+                                   mk:e(mk:select(mk:reg(outer_we),
+                                                  mk:reg(outer_we),
+                                                  mk:reg(we)))));
+         } else {
+
+           addelt(mk:modentry:assign(twriteaddr1,
+                                   
+                                                  mk:reg(writeaddr1)));
+           addelt(mk:modentry:assign(twritein1,
+                                                  mk:reg(writein1)));
+           addelt(mk:modentry:assign(twe,
+                                                  mk:reg(we)));
+         };
+
+         addelt(mk:modentry:ram(id, getsize(w), sz,
+                       mk:reg(readaddr1),
+                       mk:reg(readout1),
+                       mk:reg(twriteaddr1),
+                       mk:reg(twritein1),
+                       mk:reg(twe)));
+       } else {
+         addelt(mk:modentry:ram(id, getsize(w), sz,
                      mk:reg(readaddr1),
                      mk:reg(readout1),
                      mk:reg(writeaddr1),
                      mk:reg(writein1),
                      mk:reg(we)));
+       }
     };
-    return getelts()};
+    return [getelts();getsigs()]};
   // 2. Collect _start operations, assuming there is only one in each fsm stage.
   collectstarts(t) = collector(addx, getx) {
      visit:hls3 /rec/ (top: t) {
         deep stmt {
              load_start_x -> addx('load'(stagereg, stage, mem, reg, off))
+           | load_start_p -> addx('loadp'(pipelineid, mem, reg, off))
            | store_x -> addx('store'(stagereg, stage, mem, idx, v))
            | else -> []}};
      return getx()};
@@ -194,6 +263,12 @@ function ll_to_hls_lower_mems(aenv, top) {
              addt(mk:modentry:wire(wa, reg));
              addt(mk:modentry:assign(reg, mk:e(off)));
              ohashput(ramaddrs, mem, [stagereg;stage;reg]:ohashget(ramaddrs, mem));
+          }
+        | loadp(pipe, mem, reg, off) -> {
+             println('LOADp:'(r));
+            <[[w; wa]; [readaddr1; readout1]; [writeaddr1; writein1]; we]> = ohashget(ramsh, mem);
+             // assign a load port directly; todo: multiple ports
+             addt(mk:modentry:assign(readaddr1, mk:e(off)));
           }
         | store(stagereg, stage, mem, idx, v) -> {
             <[[w; wa]; [readaddr1; readout1]; [writeaddr1; writein1]; we]> = ohashget(ramsh, mem);
@@ -236,15 +311,20 @@ function ll_to_hls_lower_mems(aenv, top) {
                 ramwes);
      return getts()};
   // TODO: same shit for the stores
-  
+  println('NEWTOPS1='(newtops1));
+  println("========");
   // 4. Rewrite the rest, removing all the _start operations and replacing _commits with
   //    the corresponding output wires.
+  tmppp=gen_pprint_ast(hls3, top);
+  println(tmppp(top));
+  println("-----------------_");
   visit:hls3 /rec/ (top: top) {
      deep top {
         // TODO: reorder, add after all the existing wires
-        module -> mk:node(es = newtops ::  newtops1 ::  newtops2 :: newtops3 :: es)};
+        module -> mk:node(args = args :: newsignals, es =  newtops ::  newtops1 ::  newtops2 :: newtops3 :: es)};
      deep stmt {
         load_start_x -> mk:nop()
+      | load_start_p -> mk:nop()
       | store_x -> mk:nop()
       | else -> node()};
      deep expr {
@@ -292,8 +372,26 @@ function ll_to_hls3_lower_insts(top) {
                            mk:instport:p('ack', mk:v(mk:reg(ackwire)))]}
                     | else -> []);
          addwire(mk:modentry:wire(tp, %Sm<<(inst, "_out")));
-         addinst(
+         depth = ohashget(ll_hls_feedback, %Sm<<(fn, " -- PIPELINE DEPTH"));
+         if (depth) {
+           defargs = ohashget(ll_hls_feedback, %Sm<<(fn, " -- MODARGS"));
+           defargsin = (map append a in defargs do match a with ain(@_) -> [a]
+                             | else -> []);
+           defargsout = (map append a in defargs do match a with aoutreg(@_) -> [a]
+                             | else -> []);
+           defargsoutreg = match defargsout with [aoutreg(nm,@_);@_] -> nm | else -> ccerror('NO-OUTPUT-SIGNAL-IN-MODULE'(fn));
+           addinst(
             mk:modentry:inst(inst, fn, [],
+                          [mk:instport:p('clk', mk:v(mk:reg('clk')));
+                           mk:instport:p('reset', mk:v(mk:reg('reset')));
+                           @reqack;
+                           @map [a;ain(da, dw)] in zip(args, defargsin) do {
+                             mk:instport:p(da, a)
+                            };
+                           mk:instport:p(defargsoutreg, mk:v(mk:reg(%Sm<<(inst, "_out"))))]))
+         } else 
+          addinst(
+            mk:modentry:inst(inst, %Sm<<("hls_", fn), [],
                           [mk:instport:p('clk', mk:v(mk:reg('clk')));
                            mk:instport:p('reset', mk:v(mk:reg('reset')));
                            @reqack;
@@ -381,7 +479,7 @@ function ll_to_hls_pragma_function(fn, bb, args) {
      fun(aenv, top, loops) {
         ll_to_hls_simple_pipeline(aenv, top, bb, stepid, step)
      }
-   } else if (fn === '_pragma_hls_pipeline_loop') {
+   } else if (fn === '_pragma_hls_pipeline_loop'  || fn === '_pragma_hls_pipeline_loop_oc') {
      stepid = (match car(args) with
                   'var'(id) -> id
                 | x -> ccerror('WRONG_STEP'(x)));
@@ -390,8 +488,15 @@ function ll_to_hls_pragma_function(fn, bb, args) {
            'var'(id) -> mk:value:reg(id)
          | 'integer'(v,@_) -> mk:value:const(v, mk:v(32))
          | x -> ccerror('WRONG_STEP'(x))};
+     stepinstrs = { // for now let's assume all the instructions prior to pragma call are step-retaled
+         []
+     };
      fun(aenv, top, loops) {
-        ll_to_hls_loop_pipeline(aenv, top, bb, stepid, step, loops)
+        ll_to_hls_loop_pipeline(aenv, top, bb, stepid, step, loops, fn === '_pragma_hls_pipeline_loop_oc' /*onecyclep*/)
+     }
+   } else if (fn === '_pragma_hls_bare_pipeline') {
+     fun(aenv, top, loops) {
+        ll_to_hls_bare_pipeline(aenv, top, bb)
      }
    }
 }}
@@ -401,6 +506,7 @@ function ll_to_hls_do_pragmas(aenv, top, pragmas, loops) {
    foldl(fun(t, p) {
             match p with
               [bb;loc;'call'(fn,@args)] -> {
+                 println('PRAGMA'(p));
                  pfn = ll_to_hls_pragma_function(fn, bb, args);
                  if (pfn) pfn(aenv, t, loops) else t}
             | else -> t}, top, pragmas)}}
@@ -410,13 +516,28 @@ function ll_to_hls_is_pipelined(aenv, pragmas) {
 
    is_pragma_pipe(fn) =
      (fn === '_pragma_hls_pipeline') ||
-     (fn === '_pragma_hls_pipeline_loop');
+     (fn === '_pragma_hls_pipeline_loop') ||
+     (fn === '_pragma_hls_pipeline_loop_oc') ||
+     (fn === '_pragma_hls_bare_pipeline') ;
       
    foldl(fun(a,p) {
            match p with
               [bb;loc;'call'(fn,@args)] ->
                  (a || is_pragma_pipe(fn))
             | else -> a}, [], pragmas)}}
+
+\pfcode{
+function ll_to_hls_is_bare(aenv, pragmas) {
+
+   is_pragma_pipe(fn) =
+     (fn === '_pragma_hls_bare_pipeline') ;
+      
+   foldl(fun(a,p) {
+           match p with
+              [bb;loc;'call'(fn,@args)] ->
+                 (a || is_pragma_pipe(fn))
+            | else -> a}, [], pragmas)}}
+
 
 \pfcode{
 function ll_to_hls_driver(devenv, top0, pragmas, loops) {
@@ -426,6 +547,7 @@ function ll_to_hls_driver(devenv, top0, pragmas, loops) {
    aenv = ll_to_hls_prep_memories(top);
    phirenames = mkhash();
    pipelined_p  = ll_to_hls_is_pipelined(aenv, pragmas);
+   bare_p  = ll_to_hls_is_bare(aenv, pragmas);
    bbs = collector(addbb, getbbs) {
       visit:ir2 (irtoplevel: top) {
          once irbblock {
@@ -440,13 +562,14 @@ function ll_to_hls_driver(devenv, top0, pragmas, loops) {
       };
    nrams = map append r in ohashget(aenv, '*RAMS*') do {
             match r with
-              [nm;alloca(t,@dims)] -> [getram(nm, t, dims)]
+              [nm;alloca([t;@dims],@varname)] -> [getram(nm, t, dims)]
             | else -> []};
    makearg(nm, tp) = 
       visit:ir2 (irtype: tp) {
          once irtype {
-            pointer -> with target(hls0) { mk:modarg:aout(nm, ll_to_hls_gettype(t)) }
+            pointer -> with target(hls0) { mk:modarg:aoutreg(nm, ll_to_hls_gettype(t)) }
           | integer -> with target(hls0) { mk:modarg:ain(nm, ll_to_hls_gettype(tp)) }
+          | float -> with target(hls0) { mk:modarg:ain(nm, ll_to_hls_gettype(tp)) }
           | else -> ccerror('WTF?'(tp))}};
    t1b = visit:ir2 (irtoplevel: top) {
       deep irtoplevel {
@@ -470,6 +593,9 @@ function ll_to_hls_driver(devenv, top0, pragmas, loops) {
 
 
    t2  = ll_to_hls_mark_registers(aenv, t1c);
+   println("---------------------------------PRE-T200tmp");
+   prnt(t2);
+   println("---------------------------------");
    
    t2a = ll_to_hls_mark_output(aenv, t2);
    println("---------------------------------PRE-T2ztmp");
@@ -494,7 +620,7 @@ function ll_to_hls_driver(devenv, top0, pragmas, loops) {
    //println(prnt1(h2));
    h3  = ll_to_hls_remove_phis(h2);
 
-   h4  = ll_to_hls_lower_hls1(h3);
+   h4  = ll_to_hls_lower_hls1(h3, bare_p);
 
    h4x = h4;//if (pragmas) h4 else ll_to_hls_opt_registers(aenv, h4); // TODO!!!
    h4y = ll_to_hls_expand_commits(h4x);
@@ -502,13 +628,20 @@ function ll_to_hls_driver(devenv, top0, pragmas, loops) {
    h4zz = ll_to_hls_zero_ack_regs(h4z);
    println("--------------O");
    prnt2=gen_pprint_ast(hls2, top);
+   prnt3x=gen_pprint_ast(hls3, top);
    println(prnt2(h4zz));
    println("---------------------------------");
    ret0 = ll_to_hls_lower_fsm(h4zz);
+   println(prnt3x(ret0));
+   println("---------------------------------");
    ret2 = ll_to_hls_lower_mems(aenv, ret0);
    ret3 = ll_to_hls3_lower_insts(ret2);
    ret3x = ll_to_hls3_lower_waitacks(ret3);
    ret  = ll_to_hls3_sort_decls(ret3x);
+   println("--------------OZ");
+   prnt3=gen_pprint_ast(hls3, top);
+   println(prnt3(ret));
+   println("---------------------------------");
    return ret}}
 
 %%%%%%%%%%%%%%%

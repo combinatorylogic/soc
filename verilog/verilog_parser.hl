@@ -9,6 +9,14 @@ function %peg-checkfunction-verilog2001enabled (str) {
 parser verilog (veriloglex) {
   !!whitespaces;
 
+  mkunquoted<a> := { ".@cslist:" [unquoted]:q => q }
+                /  [a]
+                ;
+
+  xxcslist<a,b> := {mkunquoted<[a]>:head [b] [xxcslist]:tail => $cons(head,tail)}
+                 / {mkunquoted<[a]>:head => $wrap(head)}
+                 ;
+
   [lexical:] := [lexical] => {ctoken = lexic};
   [keyword:] := [keyword] ![identRestR] => {ctoken = keyword};
 
@@ -272,18 +280,18 @@ parser verilog (veriloglex) {
    terminal := [expression] / { [ident]:nm => id(nm) };
 
    moduleInstantiation := [nameOfModule]:nm ([parameterValueAssignment]:va)?
-                                cslist<[moduleInstance],",">:is ";" => moduleinst(nm,va,@is);
+                                xxcslist<[moduleInstance],",">:is ";" => moduleinst(nm,va,@is);
    nameOfModule := [ident];
 
-   parameterValueAssignment := "#" "(" cslist<[listOfModuleConnections],",">:es ")" => va(@es);
+   parameterValueAssignment := "#" "(" [listOfModuleConnections]:es ")" => va(@es);
 
    moduleInstance := [nameOfInstance]:nm "(" [listOfModuleConnections]:cs ")" => mod(nm,@cs);
 
    nameOfInstance := [ident]:nm ([range]:r)? => i(nm, r);
 
    listOfModuleConnections :=
-                              {  cslist<[namedPortConnection],",">:npc => npcs(@npc) }
-                           /  {  cslist<[modulePortConnection],",">:pc => pcs(@pc) }
+                              {  xxcslist<[namedPortConnection],",">:npc => npcs(@npc) }
+                           /  {  xxcslist<[modulePortConnection],",">:pc => pcs(@pc) }
                            /  {  [empty] => none() }
                            ;
 
@@ -304,6 +312,7 @@ parser verilog (veriloglex) {
    statement "statement"
              := { [blockingAssignment]:b ";" => b}
              /  { [nonBlockingAssignment]:nb ";" => nb}
+             /  { ".stmt:" [unquoted]:q => q }
              /  { if "(" [expression]:cnd ")" [statementOrNull]:tr
                   else [statementOrNull]:fl => if3(cnd, tr, fl) }
              /  { if "(" [expression]:cnd ")" [statementOrNull]:tr
@@ -586,8 +595,11 @@ parser verilog (veriloglex) {
         / [expression]
         ;
 
-   expression "expression" := 
-        { [expressionB]:c "?" [expression]:l ":" [expression]:r => ternary(c,l,r) }
+   expression "expression" :=
+        { ".num:" [unquoted]:q => number(q) }
+      / { ".expr:" [unquoted]:q => q }
+      / { ".var:" [unquoted]:q => var(q) }
+      / { [expressionB]:c "?" [expression]:l ":" [expression]:r => ternary(c,l,r) }
       / [expressionB]
       ;
 
@@ -626,6 +638,8 @@ parser verilog (veriloglex) {
 
    primary := { [identifier]:nm "[" [constantExpression]:l ":" [constantExpression]:r "]" => idx2(nm,l,r) }
            /  { [identifier]:nm "[" [constantExpression]:l "]" => idx(nm,l) }
+           /  { ".expr:" [unquoted]:q => q }
+           /  [primary_inner]
            /  [multipleConcatenation]
            /  [concatenation]
            /  [functionCall]
@@ -633,6 +647,8 @@ parser verilog (veriloglex) {
            /  { [identifier]:nm => var(nm) }
            /  { [number]:n => number(n) }
            ;
+
+   &primary_inner;
 
    number := [numberTk]:v => $val(v);
 
@@ -684,8 +700,16 @@ parser verilog (veriloglex) {
 
    scalarEventExpression := [expression]:e => scalareventexpr(e);
 
-   ident := [identTk]:v => $sval(v);
-   identifier := [identifierTk]:v => $sval(v);
+   ident := {[identTk]:v => $sval(v)}
+         /  { ".id:" "\" [identifier]:v "\" => unquote(v) }
+         /  { "\" [identifier]:v "\" => unquote(v) };
+   unquoted := {"\" [identifier]:v "\" => unquote(v)}
+            /  {"@\" [identifier]:v "\" => "unquote-splicing"(v)}
+            ;
+   identifier :=
+              {"\" [identifier]:v "\" => unquote(v)}
+            / { ".id:" "\" [identifier]:v "\" => unquote(v) }
+            / { [identifierTk]:v => $sval(v)};
 
 }
 }

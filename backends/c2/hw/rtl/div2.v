@@ -74,7 +74,7 @@ module div_pipelined2(clk, rst, z, d,
            quot_stage[stage] <= 0;
            d_stage[stage] <= 0;
         end
-     end  else begin
+     end else begin
         d_stage[0] <= { 1'b0, d, { (ZBITS-DBITS){1'b0} } };
         rem_stage[0] <= z;
         quot_stage[0] <= 0;

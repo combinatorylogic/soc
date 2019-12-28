@@ -1,6 +1,6 @@
 This core is designed to work with ROMs or block RAMs on an FPGA, and therefore expects 1 clock cycle memory
 latency. It simplifies everything greately, with pipeline stalls only happening for the complex synchronous
-extension instructions.
+extension instructions (but there is a compatible C3 core with I$/D$).
 
 
 ISA encoding:

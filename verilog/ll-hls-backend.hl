@@ -65,6 +65,7 @@ function ll_to_hls_hls3_to_verilog(top0) {
        | 'Or' -> 'binop':"|"
        | 'ZExt' -> 'convop':op
        | 'Trunc' -> 'convop':op
+       | 'FPTrunc' -> 'convop':op
        | 'compose' -> 'compose':op
        | 'range' -> 'range':op
        | 'repeat' -> 'repeat':op
@@ -107,7 +108,7 @@ function ll_to_hls_hls3_to_verilog(top0) {
                  ".writein1("; writein1; "),";'FORCECR';
                  ".we("; we; ")";'POP';");"; 'FORCECR']
        | inst -> ['FORCECR';
-                  %S<<("hls_", fn);
+                  %S<<(fn);
                   // TODO: parameters
                   " "; s(id); " ("; 'PUSHSTOP';
                   @interleave(map p in ps do p, [", ";'FORCECR']);
@@ -174,20 +175,48 @@ function ll_genssa_alt_opt(globenv, llenv, src, addpragma) {
    g4 = genssa2_to_ll(src, g3, g3ht);
    g0 = genssa2_loops(g3);
    g5 = ll_clean_pragmas(addpragma, g4);
+   println("------------------PRAGMAS_OFF");
+   iter g in g5 do println(g);
+   println("______________________________");
    return g0:g3ht:g5
+}}
+
+\pfcode{
+function ll_to_hls_remove_returns(devenv, env, fn) {
+   // If this function returns a value, turn it into a void function and add a pointer argument 'out' to pass the return value instead
+   ret=visit:ir2 (irtoplevel: fn) {
+      deep irtoplevel {
+         %function -> { match ret with
+                           void() -> node
+                         | else -> mk:node(ret = 'void'(),
+                                           args = args :: [['pointer'(ret); 'out']])}};
+      deep irbblock {
+         bblock -> mk:node(c = c::car(t), t = cadr(t))
+      };
+      deep irterm {
+         ret -> {
+                 setvalue = [gensym(); 'store'('var'('out'), value)];
+                 [[setvalue];
+                  'vret'()]}
+       | else -> [[];node]
+      }};
+   println('REMOV_RET'(ret));
+   return ret;
 }}
  
 \pfcode{
-function prep_hls(devenv, env, path, fn, fnm) collector(addpragma, getpragmas) {
-  // ohashput(hls_ll_env, '*debug-compiler-ssa*', 1);
-  // ohashput(hls_ll_env, '*debug-compiler-ssa-timing*', 1);
+function prep_hls(devenv, env, path, fn0, fnm) collector(addpragma, getpragmas) {
+  ohashput(hls_ll_env, '*debug-compiler-ssa*', 1);
+  ohashput(hls_ll_env, '*debug-compiler-ssa-timing*', 1);
+  fn = ll_to_hls_remove_returns(devenv, env, fn0);
   // 1. Run the HLS compiler backend for this function and generate
   //    a Verilog module (current path + function name ".v")
  <loops:g2tp:g2> = ll_genssa_alt_opt(env, hls_ll_env, fn, addpragma);
   pragmas = getpragmas();
   g3 =  ll_to_hls_driver(devenv, g2, pragmas, loops);
   g3x = g3;// ll_to_hls_lower_ashr(g3);
-  %call-with-output-file(%S<<(fnm, ".v"), fun(fout)
+  fullfnm = %generic-filepath(fnm);
+  %call-with-output-file(%S<<(fullfnm, ".v"), fun(fout)
          %generic_pprint:pprint(ll_to_hls_hls3_to_verilog(g3x), fun(x) fprint(fout, x)));
 
   // 2. Generate an inline interface function with the same name and pass
@@ -207,6 +236,7 @@ function prep_hls(devenv, env, path, fn, fnm) collector(addpragma, getpragmas) {
 \pfcode{
 define hls_dev_environments = mkhash()
 function hls_devenv(arch, subarch) {
+  println('DEVENV'(arch, subarch));
   fn = ohashget(hls_dev_environments, arch);
   return fn(subarch)
 }}

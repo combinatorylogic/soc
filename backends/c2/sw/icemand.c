@@ -1,5 +1,6 @@
 #include "./runtime_ice_small.c"
 #include "./ice_vga.c"
+#include "./sound_ctl.c"
 
 ##define fixed_point_width = 19
 

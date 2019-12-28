@@ -144,7 +144,7 @@ function ll_to_hls_extract_pipeline(aenv, top, bbs, ppname) {
                else node()}}}}
 
 \pfcode{
-function ll_to_hls_propagate_pipeline(aenv, top, ppname, bbs, endregs, threadregs) {
+function ll_to_hls_propagate_pipeline(aenv, top, ppname, bbs, endregs, threadregs, outregs) {
    // N.B.: bbs list is expected to be in a correct pipeline order
    bbsh = mkhash();
    bbsvh = mkhash();
@@ -171,9 +171,11 @@ function ll_to_hls_propagate_pipeline(aenv, top, ppname, bbs, endregs, threadreg
    regs = getregs();
    regsh = mkhash();
 
-   iter [nm;bb;tp] in regs :: threadregs do {
-      ohashput(regtypes, nm, tp);
-      ohashput(regsh, nm, bb)};
+   iter [nm;bb;tp] in regs :: threadregs do
+     if(not(memq(nm, outregs))) {
+        println('ADDREG'(nm, tp));
+        ohashput(regtypes, nm, tp);
+        ohashput(regsh, nm, bb)};
 
    // 2. Starting with the given list of registers (i.e., the output and / or some phis),
    //    going backwards from the last pipeline stage, mark each stage with registers that are used
@@ -311,7 +313,7 @@ function ll_to_hls_simple_pipeline(aenv, top, entrybb, stepid, step) {
    ntop1 = ll_to_hls_extract_pipeline(aenv, ntop, bbs, ppname);
    tp0 = with target (hls0) {mk:type:v(32)};//TODO!!!
   <eregs:ntop2> = ll_to_hls_propagate_pipeline(aenv, ntop1, ppname, bbs,
-                                               map [nm;tp] in outregs do nm, [[idname;'*args*';tp0]]);
+                                               map [nm;tp] in outregs do nm, [[idname;'*args*';tp0]], []);
 
    //4. Generate an enqueue FSM around this pipeline.
 
@@ -347,7 +349,7 @@ function ll_to_hls_simple_pipeline(aenv, top, entrybb, stepid, step) {
 
 
 \pfcode{
-function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
+function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops, onecyclep) {
    //1. Start with the entry basic block of a pipeline, follow down to a back edge or an exit,
    //   and  mark the pipeline basic blocks in sequence.
 
@@ -458,7 +460,7 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
    tp0 = with target (hls0) {mk:type:v(32)};//TODO!!!
   <eregs:ntop2> = ll_to_hls_propagate_pipeline(aenv, ntop1, ppname, bbs,
                                                rexits,
-                                               rentries :: [[idname;'*args*';tp0]]);
+                                               rentries :: [[idname;'*args*';tp0]], []);
 
    //4. Generate an enqueue FSM around this pipeline.
 
@@ -479,10 +481,11 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
       //        incrementing the thread ID by a given step. Otherwise issue a bubble.
       //        If reissued thread count is 0, set ACK to 1 and go to IDLE, otherwise repeat REISSUE.
 
-      getinitarg(args) =
+      getinitarg(args) = {
+         println('GETINITARG-POO'(args));
          car(map append [lbl;tp;v] in args do
               if (lbl === entrybb)
-                 match tp with 'reg' -> [mk:value:reg(v)] | else -> [v]);
+                 match tp with 'reg' -> [mk:value:reg(v)] | else -> [v])};
                  
       getstepval(args) =
          car(map append [lbl;tp;v] in args do
@@ -526,6 +529,7 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
             get()};
       
       rregs = map [reg;itp;otp;args] in ephis do {
+         println('RREGS'(reg, itp, otp, args));
          mk:reissuereg:r(nm=reg, tp = otp, init=getinitarg(args), step = getstepval(args))
       };
 
@@ -549,7 +553,8 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
                     rregs = rregs,
                     stepinstrs = stepinstrs,
                     exitcnd = exitcnd,
-                    final = final
+                    final = final,
+                    onecyclep = onecyclep
                     ),
              name = 'entry',
              bs = [],
@@ -569,5 +574,60 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
             module -> mk:node(body = enq : map append b in body do b)}}}}}
 
 
+
+\pfcode{
+function ll_to_hls_bare_pipeline(aenv, top0, entrybb) {
+   bbsh = mkhash();
+   cachebbs() =
+     visit:hls0 /rec/ (top: top0) {
+         once bblock { bb -> ohashput(bbsh, name, node()) }};
+   cachebbs();
+
+   getnext(bb) =
+      visit:hls0 /rec/ (bblock: bb) {
+         deep bblock { bb -> next };
+         deep exit {
+            br -> dst
+          | else -> []}};
+
+   getbbslist() =
+      collector(addbb, getbbs) {
+        do loop(bb = entrybb) {
+           addbb(bb);
+           nxt = getnext(ohashget(bbsh, bb));
+           if (nxt) loop(nxt)};
+        getbbs()};
+   bbs = getbbslist();
+
+   idname = gensym();
+   ppname = %Sm<<(idname, "_pipe");
+   // TODO: copy volatile arguments as registers
+   getoutputs() = collector(add, get) {
+      visit:hls0 /rec/ (top: top0) {
+         once modarg {
+            aoutreg -> add([nm;tp]) | else -> []}};
+      return get()};
+   outregs = getoutputs();
+
+   getmodname() = visit:hls0 /rec/ (top:top0) {
+      once top { module -> {
+                   ll_hls_md_register_args(nm, args);
+                   return nm }}};
+   modname = getmodname();
+
+   ll_hls_md_register_depth(modname, length(bbs));
+
+   ntop1 = ll_to_hls_extract_pipeline(aenv, top0, bbs, ppname);
+  <eregs:ntop2> = ll_to_hls_propagate_pipeline(aenv, ntop1, ppname, bbs,
+                                               [],
+                                               [],
+                                               map [nm;tp] in outregs do nm
+                                               );
+   println('BARE-EREGS'(@eregs));
+   pprnt = gen_pprint_ast(hls0, top);
+   println(pprnt(ntop2));
+   println('--------------------999');
+   return ntop2
+}}
 
 %%%%%%%%%%

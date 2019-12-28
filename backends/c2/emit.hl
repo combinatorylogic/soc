@@ -13,7 +13,7 @@ include "./legalise.hl"
 
 \phcode{
 define c2_enable_muops = mkref([])
-define c2_ram_end = mkref(16384)
+define c2_ram_end = mkref(16383)
 }
 
 \section{An optimising C2 backend}
@@ -519,7 +519,7 @@ function c2_lower_call(firstargs, dst, fn, args) {
        'storei'('reg'('SP'), 'reg'('PC'), 'const'(-1));
        'jmp'('label'(fn))];
     'move_macro'('vreg'(dst), 'reg'('R2'));
-    @if (stackargs) ['aluop'('add', 'SP', 'R0', 'SP', 'const'(length(stackargs)))];
+    @if (stackargs) ['aluop'('add', 'reg'('SP'), 'reg'('R0'), 'reg'('SP'), 'const'(length(stackargs)))];
     'abi_restorereg_macro'(cnm);
     @map [src;dst] in saveargs do 'move_macro'(dst, src)
     ]
@@ -574,6 +574,10 @@ function c2_lower_ir(src) {
        | else -> ccerror('UNSUPPORTED-YET'(node))};
       deep irval {
          integer -> 'const'(v)
+       | float -> {
+           fl = float_to_int(v);
+           println('FLOAT_CONST'(v, fl));
+           'const'(float_to_int(v))}
        | zero -> 'const'(0)
        | var     -> 'vreg'(nm)
        | global  -> if(nm === '*FP*') 'reg'('FP') else 'label'(nm)
@@ -894,6 +898,57 @@ function c2_lower_macros(src) {
       | else -> [node]
      }}}}
 
+
+\pfcode{
+function c2_remove_redundant_movs(top) {
+   visit:ir2isa(irtoplevel:top) {
+      deep irbblock {
+        bblock -> mk:node(ss = map append s in ss do s)};
+      deep c2instr {
+        mov -> {match [src;dst] with [reg(X1);reg(X2)] -> if (X1==X2) [] else [node] | else -> [node]}
+      | else -> [node]}}}}
+
+\subsection{Further legalise ldimmed instructions}
+
+\pfcode{
+
+// TODO!!!! Must do it before ldimmeds stage, i.e., recognise move_macro arguments
+// instead.
+function n_rshift(a, b)
+  notnet(int a, int b)
+    {leave a>>b;}
+
+function abs(i) {
+  if(i>0) i else 0-i;
+}
+    
+function c2_legalise_ldimmeds(addtop, src)
+{
+   check_immed_value(v0) = {
+      println('check_immed'(v0));
+      v = match v0 with zero() -> 0 | const(x) -> x | else -> 0;
+      if (abs(v) > 33554431) { // won't fit in 25 bits
+             // [n_rshift(v, 25); n_bitand(v, 33554431)]
+            'poo'(v)
+      } else 'ok'(v)
+   };
+   visit:ir2isa(irtoplevel: src) {
+      deep irbblock {
+         bblock -> mk:node(ss = map append s in ss do s)};
+      deep c2instr {
+         move_macro -> {
+           match src with
+             'const'(x) -> {
+            vx = check_immed_value(src);
+            match vx with
+              ok(one) -> [node]
+            | poo(one) -> symbols(ptr, n1) { // two instr load
+              addtop('label'(ptr)); addtop('data'('const'(one)));
+              [ 'move_macro'('vreg'(n1), 'label'(ptr));
+                'load'(dst, 'vreg'(n1), 'zero'())]}}
+          | else -> [node]}
+       | else -> [node]}}}}
+
 \subsection{Hazard management}
 
 Hazards depend on the pipeline configuration. For the default Xilinx
@@ -1088,16 +1143,17 @@ ROMs, so every word counts).
 \subsection{Driver}
 
 \pfcode{
-function c2_driver(src) {
+function c2_driver(addtop, src) {
    t1 = c2_gep_elaboration(src);
    t2 = c2_out_of_ssa(t1);
    t3 = c2_lower_ir(t2);
    t3x = c2_lower_args(t3);
-   t4 = c2_legalise_immediates(t3x);
+   t4 = c2_legalise_ldimmeds(addtop, c2_legalise_immediates(t3x));
    t5 = c2_regalloc(t4);
    t6 = c2_spills(t5);
    t7 = c2_lower_macros(t6);
-   t8 = c2_fix_labels(c2_flatten(t7));
+   t71 = c2_remove_redundant_movs(t7);
+   t8 = c2_fix_labels(c2_flatten(t71));
    t8x = c2_cleanup_trivial(t8);
    t9 = c2_schedule(t8x);
    return t9;
@@ -1132,7 +1188,8 @@ function c2_emit_data(e)
      deep irval {
         array -> map append e in elts do e
       | integer -> ['const'(v)]
-      | zero -> ['const'(0)]
+      | zero -> { len = c2_type_size(t);
+                  map i in [0..len] do 'const'(0) }
       | else -> ccerror('todo'(node))};
      deep irtoplevel {
         global ->
@@ -1142,16 +1199,17 @@ function c2_emit_data(e)
 
 
 \pfcode{
-function c2_driver_mdl(mdl0, fnm)
+function c2_driver_mdl(mdl0, fnm, prevmdl)
 collector(vladd, vlget) {
    mdl = c2_lift_strings(mdl0);
    envtypes = ll_propagate_types(mdl);
    mdl_pre = hoist_inlined_verilog(vladd, mdl, ['exec_arg2';'exec_arg1'], fun(iid, icrc) iid);
+   iter i in mdl_pre do println('OOO1'(i));
   <[env;types]> = envtypes;
    mdl1 = c2_legalise_terms(c2_legalise_binops(types, mdl_pre));
-   mdl1x =  ir2_inline(c2_inline_pred, mdl1);
-   mdl1y =  ir2_inline(c2_inline_pred, mdl1x);
-   mdl1z =  ir2_inline(c2_inline_pred, mdl1y);
+   mdl1x =  ir2_inline(c2_inline_pred, mdl1, prevmdl);
+   mdl1y =  ir2_inline(c2_inline_pred, mdl1x, prevmdl);
+   mdl1z =  ir2_inline(c2_inline_pred, mdl1y, prevmdl);
    mdl1zz = ir2_bodypass(mdl1z, il2ssa_fullssa);
    mdl1f =  c2_optimise_again(mdl1zz);
    envtypes = ll_propagate_types(mdl1f);
@@ -1160,7 +1218,9 @@ collector(vladd, vlget) {
    asm0 = map append t in mdl2 do 
      visit:ir2 (irtoplevel: t) {
         once irtoplevel {
-          %function -> if (body && not(c2_inline_pred(node))) c2_driver(node) else []
+          %function -> if (body && not(c2_inline_pred(node)))
+                       collector(addtop, gettop) {
+                          c2_driver(addtop, node)::gettop() } else []
         | comment -> []
         | global -> c2_emit_data(node)
         | else -> ccerror('UNSUPPORTED'(node))}};

@@ -24,12 +24,17 @@ function ll_to_hls_explicit_fsms(aenv, top) {
    //    the register allocation, and one register can be assigned more than once.
    decls = collector(adddecl, getdecls) {
      regs = mkhash();
-     liftdecl(k, id, rtp) =
+     liftdecl(k, id, rtp) = {
+       canlift = {match ohashget(aenv, id) with
+           'output'(x) -> nil
+         | else -> 1};
        with target(hls1) {
-          if(k==='reg')
-             adddecl(mk:modentry:register(rtp, id))
-          else adddecl(mk:modentry:wire(rtp, id));
-          if(k==='reg') ohashput(regs, id, id)};
+          if(canlift) {
+            if(k==='reg')
+               adddecl(mk:modentry:register(rtp, id))
+            else adddecl(mk:modentry:wire(rtp, id));
+          };
+          if(k==='reg') ohashput(regs, id, id)}};
      collectdecls() =
         visit:hls0 /rec/ (top: top) {
            deep instr {

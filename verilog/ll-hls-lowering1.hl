@@ -1,5 +1,25 @@
 %literate:
 
+\subsection{Feedback}
+
+\pfcode{
+define ll_hls_feedback = mkhash()
+function ll_hls_md_register_depth(nm, depth) {
+   ohashput(ll_hls_feedback, %Sm<<(nm, " -- PIPELINE DEPTH"), depth);
+}
+function ll_hls_md_register_ram(modnm, ramnm, signals) {
+   id =  %Sm<<(modnm, " -- RAM SIGNALS");
+   signals1 = map [nm;tp] in signals do [nm;%ast2:to-listform(hls2, type, tp)];
+   ohashput(ll_hls_feedback, id,
+               [[ramnm; signals1]] :: ohashget(ll_hls_feedback, id))}
+function ll_hls_md_register_args(nm, args) {
+   args1 = map a in args do %ast2:to-listform(hls2, modarg, a);
+   ohashput(ll_hls_feedback, %Sm<<(nm, " -- MODARGS"), args1)
+}}
+
+
+More to come...
+
 \subsection{Preparing the source IR}
 
 First we have to replace all the pointers and GEPs with explicit memory access operations, or fail
@@ -71,7 +91,7 @@ collector(addram, getrams) {
     deep irpair: e(nm);
     deep irexpr(dst) {
        alloca -> {
-           w = 'alloca'(@getwidth(t));
+           w = 'alloca'(getwidth(t),@varname);
            addram([dst;w]);
            ohashput(aenv, dst, dst);
            ohashput(aenv, %Sm<<('PTR_', dst), [dst; 'integer'(0)])}
@@ -145,11 +165,45 @@ function ll_to_hls_bb_splitops(devenv, aenv, bb, pipelined)
          mload -> symbols(dst1) {
             [[dst1; 'mload_start'(mem, dst1, offset)];
              [dst; 'mload_commit'(mem, dst1, 'var'(dst1))]]}
+       | call -> {
+           // We can only "call" pure linear pipeline functions or REQ/ACK functions if in an FSM mode,
+           // with "functions" being instantiated as modules.
+           // Therefore, we expect that a function was treated with the return elimination previously,
+           // and we expect to find its metadata in the verilog modules context.
+           //
+           // The function call is replaced with an 'op_start' and 'op_commit' pair, just like multi-cycle
+           // ops.
+           depth = ohashget(ll_hls_feedback, %Sm<<(fn, " -- PIPELINE DEPTH"));
+           if (depth) {
+             defargs = ohashget(ll_hls_feedback, %Sm<<(fn, " -- MODARGS"));
+             println('DEPTH-ARGS'(depth, defargs));
+             dst1 = gensym();
+             [[dst1; 'op_start'(fn, dst1, args, depth, dst)];
+              [dst; 'op_commit'(fn, dst1, 'var'(dst1), depth)]]
+           } else ccerror('CANNOT-FIND-MODULE'(fn));
+         }
        | binary -> {
            opdesc = ohashget(devenv, %Sm<<('binop-', op, if(pipelined) '-pipe' else ""));
+           println('BINOP'(op, opdesc, %Sm<<('binop-', op, if(pipelined) '-pipe' else "")));
            if (opdesc) symbols(dst1) {
              <[opname;delay]> = opdesc;
               [[dst1; 'op_start'(opname, dst1, [l;r], delay, dst)];
+               [dst;  'op_commit'(opname, dst1, 'var'(dst1), delay)]]}
+           else [[dst; node]]}
+       | fcmp -> {
+           opdesc = ohashget(devenv, %Sm<<('fcmpop-', vcond, if(pipelined) '-pipe' else ""));
+           println('FCMPOP'(vcond, opdesc, %Sm<<('fcmpop-', vcond, if(pipelined) '-pipe' else "")));
+           if (opdesc) symbols(dst1) {
+             <[opname;delay]> = opdesc;
+              [[dst1; 'op_start'(opname, dst1, [lhs;rhs], delay, dst)];
+               [dst;  'op_commit'(opname, dst1, 'var'(dst1), delay)]]}
+           else [[dst; node]]}
+       | convop -> { // TODO: take 't' into account; Special case for Trunc
+           opdesc = ohashget(devenv, %Sm<<('convop-', op, if(pipelined) '-pipe' else ""));
+           println('CONVOP'(op, opdesc, %Sm<<('fconvop-', op, if(pipelined) '-pipe' else "")));
+           if (opdesc) symbols(dst1) {
+             <[opname;delay]> = opdesc;
+              [[dst1; 'op_start'(opname, dst1, [v], delay, dst)];
                [dst;  'op_commit'(opname, dst1, 'var'(dst1), delay)]]}
            else [[dst; node]]}
        | else -> [[dst;node]]};

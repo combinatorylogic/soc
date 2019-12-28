@@ -1,3 +1,4 @@
+#include "runtime_issue.c"
 #include "runtime_common.c"
 #include "runtime_extra.c"
 

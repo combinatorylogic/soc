@@ -109,7 +109,9 @@ function process_inlined_verilog_c2(fnm, vlg) {
 \pfcode{
 function c2_init_binops()
 {
+  println('C2_INIT_BINOPS'());
   fn(sub) = {
+    println('C2_INIT_BINOPS'('c2', sub));
     ht = mkhash();
     iter [nm;fnm;delay] in [
        'binop-Mul-pipe'('Mul', if(sub==='ice40') 3 else 4);
@@ -117,7 +119,20 @@ function c2_init_binops()
        'binop-SDiv-pipe'('Div', 17);
        'binop-SDiv'('DivFSM', 'd'(1));
        'binop-SRem-pipe'('Rem', 17);
-       'binop-SRem'('RemFSM', 'd'(1))
+       'binop-SRem'('RemFSM', 'd'(1));
+       'binop-FMul-pipe'('FMul', 3);
+       'binop-FAdd-pipe'('FAdd', 3);
+       'binop-FSub-pipe'('FSub', 3);
+       'binop-FDiv-pipe'('FDiv', 6+3);
+       'binop-FMul'('FMulFSM', 'd'(1));
+       'binop-FAdd'('FAddFSM', 'd'(1));
+       'binop-FSub'('FSubFSM', 'd'(1));
+       'fcmpop-OGT-pipe'('OGT', 0);
+       'fcmpop-OGT'('OGT', 0);
+       'convop-FPToSI-pipe'('FPToSI', 2);
+       'convop-FPToSI'('FPToSIFSM', 'd'(1));
+       'convop-SIToFP-pipe'('SIToFP', 3);
+       'convop-SIToFP'('SIToFPFSM', 'd'(1))
     ] do ohashput(ht, nm, [fnm;delay]);
     ht};
   ohashput(hls_dev_environments, 'c2', fn);

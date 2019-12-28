@@ -64,7 +64,8 @@ ast hls0 recform {
                           *reissuereg:rregs,
                           *instr:stepinstrs,
                           value:exitcnd,
-                          *instr:final
+                          *instr:final,
+                          any:onecyclep
                           );
     reissuereg = r(ident:nm, type:tp, value:init, value:step);
     parblock = pb(ident:name, *instr:ss, *ident:pars);
@@ -136,7 +137,8 @@ ast hls1 : hls0 () recform {
                           *reissuereg:rregs,
                           *instr:stepinstrs,
                           value:exitcnd,
-                          *instr:final
+                          *instr:final,
+                          any:onecyclep
                           );
    fsmstage = stage(label:name, *instr:ss, exit:next);
    pipestage = stage(label:name, *instr:ss, expr:stall); // keep names for debugging
@@ -211,6 +213,7 @@ ast hls3 : hls2 () recform {
         | store_x(ident:stagereg, value:stage, ident:mem, expr:idx, expr:v)
         | load_start_x(ident:stagereg, value:stage,
                        ident:mem, ident:reg, expr:off)
+        | load_start_p(ident:pipelineid, ident:mem, ident:reg, expr:off)
         | display(string:text, *value:args)
         ;
    selectelt = e(value:c, value:v);

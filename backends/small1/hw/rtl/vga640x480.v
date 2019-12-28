@@ -21,17 +21,6 @@ module vga(input  clk,      // system clock (100mhz)
            output            rgb    // monochrome output, all three channels 0 or 1
            );
 
-
-
-
-   reg [23:0] 		     blinkreg;
-   always @(posedge clk)
-     if (!rst)
-       blinkreg <= 0;
-     else
-       blinkreg <= blinkreg + 1;
-   
-
    // Pixels are fed via a small FIFO
 
    // vmem fsm:
@@ -93,6 +82,12 @@ module vga(input  clk,      // system clock (100mhz)
    parameter S_CHRR1 = 3;
    parameter S_EOL   = 4;
 
+   reg [5:0] 		     blinkreg;
+   always @(posedge clk)
+     if (!rst)
+       blinkreg <= 0;
+     else if (chrstate == S_VSYNC)
+       blinkreg <= blinkreg + 1;
 
    assign vmem_addr = chrstate==S_CHR0?addr_chr0:addr_chrr;
 
@@ -133,7 +128,7 @@ module vga(input  clk,      // system clock (100mhz)
              if (~fifo_full) begin
                 chrpos <= chrposnxt;
                 colno <= colno + 1;
-                fifo_in <= (blinkreg[23] & ascii[7])?vmem_data^8'hff:vmem_data; // bit 8 = inv
+                fifo_in <= (blinkreg[5] & ascii[7])?vmem_data^8'hff:vmem_data; // bit 8 = inv
                 fifo_en <= 1;
                 if (chr_eol) begin
                    chrstate <= S_EOL;

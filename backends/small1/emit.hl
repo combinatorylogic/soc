@@ -834,7 +834,7 @@ function small1_inline_pred(f) {
      | else -> []}}}}
 
 \pfcode{
-function small1_backend_passes(mdl, fnm)
+function small1_backend_passes(mdl, fnm, prevmdl)
 collector(vladd, vlget) {
   envtypes = ll_propagate_types(mdl);
   mdl2 = ll_annotate_geps(envtypes, mdl);
@@ -842,9 +842,9 @@ collector(vladd, vlget) {
  <[env;types]> = envtypes;
   mdl2yo = small1_legalise_binops(types, mdl2x);
   mdl2y =  small1_legalise_terms(mdl2yo);
-  mdl2z = ir2_inline(small1_inline_pred, mdl2y);
-  mdl2z1 = ir2_inline(small1_inline_pred, mdl2z);
-  mdl2z2 = ir2_inline(small1_inline_pred, mdl2z1);
+  mdl2z = ir2_inline(small1_inline_pred, mdl2y, prevmdl);
+  mdl2z1 = ir2_inline(small1_inline_pred, mdl2z, prevmdl);
+  mdl2z2 = ir2_inline(small1_inline_pred, mdl2z1, prevmdl);
   mdl3 = ir2_functionpass(mdl2z2, ir2remove_phis_pass);
 
   envtypes = ll_propagate_types(mdl3);

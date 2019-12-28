@@ -52,7 +52,7 @@ int main(int argc, char **argv, char **env) {
         if (argc!=2) return -1;
         fsrc = fopen(argv[1], "r");
         size = 8192;
-        buf = (uint *)malloc(2 * size + 2);
+        buf = (uint *)malloc(2 * sizeof(uint) * size + 2);
         for (n = 0; n < size; n++) {
                 uint tmp;
                 if (fscanf(fsrc, "%x\n", &tmp) == EOF) break;
