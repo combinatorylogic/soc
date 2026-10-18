@@ -117,7 +117,7 @@ gatetypeR := and / nand / or / nor / xor / xnor / bufif0 / bufif1 /buf / notif0
 @identifierTk := [identR] ("." [identR])*;
 
 @@identR := { [identBeginR] [identRestR]* }
-         /  { [BSLASH] (![SPACE] .)+ }
+       //   /  { [BSLASH] (![SPACE] .)+ } // escaped identifiers clash with unquoting
          ;
 
 @@identBeginR := "_"/[a-z]/[A-Z];
@@ -156,6 +156,11 @@ gatetypeR := and / nand / or / nor / xor / xnor / bufif0 / bufif1 /buf / notif0
 @@whitespaces := [whitespace]+;
 
 @sysfunidentTk := "$" [identR];
+
+
+// For extensibility:
+@@Spaces := [whitespaces];
+@@IdentRest := [identRestR];
 
 }
 

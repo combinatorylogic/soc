@@ -55,6 +55,17 @@ function ll_to_hls_sort_ordgraph(ordgraph) {
      return getpar()}}}
 
 \pfcode{
+#(define xtosinglef (r_tsbind "System.Convert" "ToSingle" "System.Double"))
+#(define xtobytes (r_tsbind "System.BitConverter" "GetBytes" "System.Single"))
+#(define xtoint (r_tsbind "System.BitConverter" "ToInt32" "System.Byte[]" t_int))
+
+function float_to_int(d) {
+  sd = %S<<(d);
+  xtoint(xtobytes(xtosinglef(#(flt:parse sd))),0)
+}
+}
+
+\pfcode{
 %"ir2:irbblock -> hls0:bb; Detect parallelism in a given basic block"
 function ll_to_hls_bb_split(aenv, bb, types) {
 
@@ -118,10 +129,11 @@ function ll_to_hls_bb_split(aenv, bb, types) {
         | mload_commit -> with target(hls0) mk:iop:load_commit(mem, regid)
         | op_start -> with target(hls0) mk:iop:op_start(inst = regid, fn = op, cycles = cycles,
                                                         args = args, tp = gettype2(dstreg, ohashget(types, dstreg)))
-        | op_commit -> with target(hls0) mk:iop:op_commit(inst = regid, cycles = cycles)
+        | op_commit -> {println('commit!'(regid, cycles)); with target(hls0) mk:iop:op_commit(inst = regid, cycles = cycles)}
         | binary -> with target(hls0) mk:iop:op(op, [l;r], gettype2(dst, ohashget(types, dst)))
         | convop -> with target(hls0) mk:iop:convop(op, v, gettype(t))
         | icmp   -> with target(hls0) mk:iop:op(vcond, [lhs;rhs], gettype2(dst, ohashget(types, dst)))
+        | fcmp   -> with target(hls0) mk:iop:op(vcond, [lhs;rhs], gettype2(dst, ohashget(types, dst)))
         | phi    -> with target(hls0) mk:iop:phi(dsts)
         | select -> with target(hls0) mk:iop:select(vif, vthen, velse)
         | else   -> ccerror('UNSUPPORTED_INSTRUCTION'(node))};
@@ -130,6 +142,7 @@ function ll_to_hls_bb_split(aenv, bb, types) {
            false -> mkconst(0, bit)
         |  true  -> mkconst(1, bit)
         |  integer -> mkconst(v, with target(hls0) mk:type:v(ll_get_itype_width(if(itp) car(itp) else 'i1', 'b'(node))))
+        |  float -> mkconst(float_to_int(v), with target(hls0) mk:type:v(32))
         |  undef -> mkundef(gettype(t))
         |  zero -> mkconst(0, gettype(t))
         |  var -> with target(hls0) mk:value:reg(nm)

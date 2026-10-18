@@ -99,4 +99,53 @@ about 35MHz. Of course, using extended instructions can affect timing significan
 The default Nexys4DDR SoC includes an LED output and a 640x480 monochrome VGA. There is also an optional UART 
 (up to 115200) and an optional 7-segment display driver.
 
-On the BlackIce board we have to stick to 25MHz, because we cannot use PLLs with 16-bit SRAM.
+On the BlackIce I board we have to stick to 25MHz, because we cannot use PLLs with 16-bit SRAM. No such problem on BlackIce II.
+
+
+
+--------------
+
+
+Just a thought: 
+
+   we can have pipelined extended instructions of arbitrary pipeline depth, if they're destined at *special* register files / special commit procedures.
+   No need to stall the pipeline for them.
+   
+
+
+Another thought:
+
+   if a loop step expression is complex (i.e., multi-cycle), we can prepend a loop enqueue engine with a thread id issue engine which would generate IDs 
+   first (into a circular buffer) and only then kick off a loop body.
+   
+   Does not make much sense for non-looping pipelined cores though, in this case we'd better do the usual threadid thing.
+   
+   Also does not make much sense if initial threadid is absorbed into pipeline.
+   
+   How to detect: 
+      if step expression is complex (i.e., not a primitive integer op), we generate two special nodes instead of one enqueue_loop.
+      
+      E.g.,
+      
+      | enqueue_thrgen(ident:id,
+                       ident:pipeline, // target pipeline
+                       ident:stepbb,   // basic block containing step instrs
+                       value:thrid,
+                       value:step,
+                       value:thrinit)
+      | enqueue_loop(ident:id, ident:pipeline,
+                          number:depth,
+                          value:thrid,  // if enqueue_thrgen is generated, will contain a special value here,  step and init will be ignored
+                          value:step,
+                          value:thrinit,
+                          
+                          *value:exit_dst,
+                          *value:exit_src,
+                          *type:exit_type,
+
+                          *reissuereg:rregs,
+                          *instr:stepinstrs,
+                          value:exitcnd,
+                          *instr:final
+                          )
+      

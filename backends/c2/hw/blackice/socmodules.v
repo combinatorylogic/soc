@@ -28,6 +28,7 @@
    assign green=rgb[0]?4'he:4'b0;
    assign blue=rgb[2]?4'h3:4'b0;
    
+   wire data_we_cpu;
    SB_IO
      #(
        .PIN_TYPE(6'b 1010_01)
@@ -48,7 +49,6 @@
    wire [17:0] sram_adr_cpu;
 
    assign ADR = grant_vga?sram_adr_vga:grant_cpu?sram_adr_cpu:0;
-   wire data_we_cpu;
    assign data_we = grant_vga?1:(!data_we_cpu);
 
    wire data_rq_cpu;

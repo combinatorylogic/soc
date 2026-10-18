@@ -162,7 +162,7 @@ Here, `threadId` is a register to be incremented by `threadStep` for each conseq
 The other kind of a pipelined function can be more complex - it must contain a simple linear CFG
 inside a single-exit loop. The other restrictions include:
 
-* No memory access (yet)
+* Memory reads are allowed, stores are not (see below); the arrays are filled from outside
 * Loop exit must be at its entry basic block (i.e., it should be a C `for` or `while` loop, as `do ... while` is not supported yet).
 * No complex logic prior to the loop entry (i.e., no computation - variables must be initialised to constants or argument values)
 * There must not be a possibility to move a loop invariant outside (TODO: just rematerialise everything back into the loop body)
@@ -217,6 +217,108 @@ a GPU running exactly the same kernel.
 
 You can see a 4-core version of it (suitable for the Nexys4 DDR board) in `demos/mand2gfx.c`.
 
+## Block RAM in pipelined loops
+
+A `hls_pipeline_loop` body may read local arrays. Every array is one 2-port RAM (one read port,
+one write port), and the write port is only driven from outside the module, through the
+`array_addr`, `array_data` and `array_<name>_we` inputs that `ll_hls_config_ramsignals` exposes
+(see `%prefill_array` in `runtime_issue.c`): a pipelined kernel has no data path of its own to fill
+a RAM, so stores inside the pipelined loop are rejected (`PIPELINE-STORE-UNSUPPORTED`). The scheduler
+places a read's address one stage before the stage that uses the data; in a pipeline the RAM output
+is only present for that one step, so for pipelined blocks the latency constraints are equalities
+rather than lower bounds.
+
+If the loop body reads the same array more than once per iteration the reads compete for the single
+read port. Two mechanisms resolve that:
+
+* By default the pipeline runs at an initiation interval `ii` equal to the largest number of reads
+  of one array per iteration: a free-running sub-cycle counter time-multiplexes the read port, each
+  read gets a sub-cycle slot, the data of early slots is parked in hold registers, and the pipeline
+  registers and the thread issue advance only on the last sub-cycle. Operators with a latency of `n`
+  cycles then need `ceil(n / ii)` stages. This keeps one RAM per array but issues one thread every
+  `ii` cycles; avoid it where the RAM budget allows.
+* `##{ ll_hls_config_ram_dup := k; }` allows up to `k` copies of an array's RAM. The copies share
+  the write port (so one external prefill fills all of them) and the reads are spread over the
+  copies; with enough copies the interval stays at 1. Block RAM is the scarce resource, so this is
+  opt-in.
+
+Values that depend on the thread id but do not change inside the loop (a hoisted `row * 16`) are
+moved back into the loop body by the pipeline pass, otherwise the enqueue FSM would compute them once
+per request, for the first thread only. Computations the optimiser places in the loop header are
+moved the same way unless the exit condition needs them; the header itself is not a pipeline stage.
+
+Two practical notes: a loop with a small constant trip count is unrolled by the optimiser before the
+pipeline pass sees it (use a runtime bound), and `%kernel_width(kernel)` in C code only knows the
+depth if the kernel has been compiled already, which a `##nil` line right after the kernel ensures.
+
+## Batches of threads and results in RAM
+
+`hls_pipeline_loop` processes one round of `depth` threads per request and returns their results in
+the widened output register. The variant
+
+```C
+  ::pragma hls_pipeline_loop_batch(threadId, threadStep, threadCount, output);
+```
+
+processes `threadCount` threads (an argument or a constant) per request: the first round fills the
+slots, and a slot whose thread has finished is refilled with the next thread on its next visit, so
+a long batch keeps the pipeline busy and needs one request instead of `threadCount / depth`. The
+thread id travels with the slot, so `threadId` in the body is the slot's thread, not the one being
+issued. Since slots are reused, per-thread results have to leave the enqueue FSM as they appear:
+either through the one-cycle output protocol (`hls_pipeline_loop_batch_oc`) or by storing them into a
+local array after the loop:
+
+```C
+  int32 y[120];
+  ...
+  for (...) { ... }
+  y[row] = acc;
+```
+
+The store is executed by the enqueue FSM when the thread exits, on the array's write port. An array
+the kernel never reads gets its read port exposed on the module (`array_<name>_raddr` in,
+`array_<name>_rdata` out, one cycle after the address), the counterpart of the prefill inputs: the
+same kind of inline Verilog harness that fills the inputs can stream the results out over AXI, and
+the C2 does not have to touch them. The classic pragma keeps its semantics; the batch variant is
+selected by name.
+
+## Several kernels in one function
+
+Pipelined loops may sit in the branches of an `if` tree at the top of an `__hls` function, one
+pragma per branch, and then share the function's arrays:
+
+```C
+__hls __nowrap
+void solver(int32 op, int32 row, int32 rowstep, int32 count, int32 n, int32 *out)
+{
+        int32 a[16]; int32 y[64]; int32 z[64];
+        if (op == 0) {
+                ::pragma hls_pipeline_loop_batch(row, rowstep, count, out);
+                ... y[row] = acc; ...          // reads a, writes y
+        } else {
+                ::pragma hls_pipeline_loop_batch(row, rowstep, count, out);
+                ... z[row] = acc; ...          // reads y, writes z
+        }
+}
+```
+
+The entry FSM keeps its shape: the branch that carries a pragma raises that pipeline's request
+register, spins on its acknowledge register and returns; each pipeline has its own enqueue FSM,
+sub-cycle counter and initiation interval. Reads of one array from several pipelines (and from FSM
+stages) are multiplexed on its read port by which enqueue is active, so an array written by one
+kernel's exit stores is read by the next kernel without leaving the module. In this mode results
+leave through RAM stores only; the `output` argument of the pragma is not written. The classic
+single-kernel layout (pragma in the function's first block) is unchanged.
+
+Two details matter when the kernels share inputs and arrays. The `count` and `n` arguments are
+seen by every pipeline, so an idle pipeline's thread-issue condition is gated on its FSM being
+out of idle (otherwise the previous batch's `issued` compared against another kernel's `count`
+lets phantom threads into its liveness shift register, and they store on exit). The number of
+read-port copies of an array (`ll_hls_config_ram_dup`) is the maximum over all pipelined blocks
+that read it, reported per block as `PIPELINE-RAM-READS`; a kernel reading `x` once does not undo
+the two copies another kernel needs. Known limitation: a batch pipeline admits a new thread only
+when its last slot is empty, not when the slot's thread exits in the same cycle, so kernels whose
+threads run one loop iteration issue every other cycle once the pipeline is full.
 # RANT
 
 HLS has a very limited use indeed and we're not subscribing in any way to an
@@ -251,7 +353,7 @@ It's planned to add support for:
 * Explicit vector operations
 * Structures (both as registers and as a RAM datatype)
 * Accessing the I/O pins directly
-* Accessing block RAMs in pipelines
+* Stores into block RAMs from pipelines, and RAMs with more than one write port
 * Asynchronous operation of the synthesised modules (i.e., not necessarily driven by `REQ/ACK`)
 * More pragmas for a fine control over synthesis
 * Explicit parallelism

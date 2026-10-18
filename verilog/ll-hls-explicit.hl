@@ -24,12 +24,17 @@ function ll_to_hls_explicit_fsms(aenv, top) {
    //    the register allocation, and one register can be assigned more than once.
    decls = collector(adddecl, getdecls) {
      regs = mkhash();
-     liftdecl(k, id, rtp) =
+     liftdecl(k, id, rtp) = {
+       canlift = {match ohashget(aenv, id) with
+           'output'(x) -> nil
+         | else -> 1};
        with target(hls1) {
-          if(k==='reg')
-             adddecl(mk:modentry:register(rtp, id))
-          else adddecl(mk:modentry:wire(rtp, id));
-          if(k==='reg') ohashput(regs, id, id)};
+          if(canlift) {
+            if(k==='reg')
+               adddecl(mk:modentry:register(rtp, id))
+            else adddecl(mk:modentry:wire(rtp, id));
+          };
+          if(k==='reg') ohashput(regs, id, id)}};
      collectdecls() =
         visit:hls0 /rec/ (top: top) {
            deep instr {
@@ -153,6 +158,26 @@ stages. Now we can introduce stage registers and replace the $\varphi$-nodes wit
 \pfcode{
 %"hls1:top -> hls1:top; replace phis with selects"
 function ll_to_hls_remove_phis(top) {
+  // 0. One branch register serves all the phis of an FSM, so every phi of a destination stage
+  //    must agree on the number a given predecessor writes into it. The number is the position
+  //    of the predecessor in the stage's predecessor list (first-seen order), not the position
+  //    in the individual phi's argument list, which can differ between phis of the same stage.
+  preds = mkhash();
+  predkey(fsm, stage) = %Sm<<(fsm, "--", stage);
+  addpreds(fsm, stage, labels) = {
+     key = predkey(fsm, stage);
+     ohashput(preds, key, unifiq(ohashget(preds, key) :: labels))};
+  predindex(fsm, stage, label) =
+     do loop(l = ohashget(preds, predkey(fsm, stage)), n = 0) {
+        match l with
+           hd:tl -> if (hd === label) n else loop(tl, n+1)
+         | else -> ccerror('IMPOSSIBLE'('phi-predecessor'(fsm, stage, label)))};
+  collectpreds() =
+     visit:hls1 /rec/ (top: top) {
+        deep iop { nphi -> addpreds(fsm, stage, args) | else -> []};
+        deep expr { nphi -> addpreds(fsm, stage, args) | else -> []};
+        deep phiarg { p -> label }};
+  collectpreds();
   // 1. Collect state transitions that are leading to phis
   fsms = mkhash();
   getfsm(id) =
@@ -164,8 +189,8 @@ function ll_to_hls_remove_phis(top) {
   collectphis() = {
      addphi(fsm, stage, args) = {
         arcs = getfsm(fsm);
-        iter a in args count n do 
-           ohashput(arcs, a, [stage; n]:ohashget(arcs, a))};
+        iter a in args do
+           ohashput(arcs, a, [stage; predindex(fsm, stage, a)]:ohashget(arcs, a))};
      visit:hls1 /rec/ (top: top) {
         deep iop { nphi -> addphi(fsm, stage, args) | else -> []};
         deep expr { nphi -> addphi(fsm, stage, args) | else -> []};
@@ -213,14 +238,16 @@ function ll_to_hls_remove_phis(top) {
        regname = getfsmreg(fsm);
        return injectexits(fsm, stage, regname, phiarcs);
      } else []};
+  // args are [label; value] pairs here; each arm tests the predecessor's canonical number.
   expandphi(fsm, stage, args) =
     with target(hls1){
        regname = getfsmreg(fsm);
-       do loop(a = args, cnt = 0) {
+       do loop(a = args) {
          match a with
-            [hd] -> hd
-          | hd:tl -> mk:expr:select(mk:e(mk:op('EQ', [mk:reg(regname); mk:const(cnt, mk:v(0))], mk:v(32))),
-                                    hd, loop(tl, cnt+1))}};
+            [hd] -> cadr(hd)
+          | hd:tl -> mk:expr:select(mk:e(mk:op('EQ', [mk:reg(regname);
+                                                     mk:const(predindex(fsm, stage, car(hd)), mk:v(0))], mk:v(32))),
+                                    cadr(hd), loop(tl))}};
   return visit:hls1 /rec/ (top: top) {
      deep top {
         module -> {
@@ -235,7 +262,7 @@ function ll_to_hls_remove_phis(top) {
      deep expr {
         nphi -> expandphi(fsm, stage, args)
       | else -> node()};
-     deep phiarg { p -> v };
+     deep phiarg { p -> [label; v] };
      deep iop {
         nphi -> mk:v(mk:e(expandphi(fsm, stage, args)))
       | else -> node()}}}}

@@ -1,6 +1,6 @@
 This core is designed to work with ROMs or block RAMs on an FPGA, and therefore expects 1 clock cycle memory
 latency. It simplifies everything greately, with pipeline stalls only happening for the complex synchronous
-extension instructions.
+extension instructions (but there is a compatible C3 core with I$/D$).
 
 
 ISA encoding:
@@ -110,3 +110,20 @@ Extensions:
   - Complex extension instructions can be asynchronous or pipelined - they issue new input into an instruction
       module pipeline and the results must be harvested after N clock cycles (e.g., using another simple
       extension instruction).
+
+
+-----------------------
+
+
+TODO: multi-cycle extended instruction without waiting:
+
+ - Extended instruction initiates some process which will produce a result after some (fixed or
+   dynamic) number of clock cycles. The process can get locked, or if it's fully pipelined, allow to
+   initiate a new operation every cycle. On initialisation, the result is returned as a reg token, which
+   doubles as a destination register number.
+
+ - When done, the process can be stalled until ext reg file write port is available. We can have ext
+   reg files with multiple write ports.
+
+ - Another instruction can wait on a given token, stalling the pipeline until token is triggered. It's
+   also possible to poll a token without stalling.

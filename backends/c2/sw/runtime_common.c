@@ -1,4 +1,3 @@
-
 typedef int32 int;
 typedef uint32 uint;
 

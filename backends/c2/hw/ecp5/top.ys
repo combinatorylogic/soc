@@ -1,0 +1,3 @@
+read_verilog defines.v ecp.v 3rdparty.v ../rtl/core.v ../rtl/soctop.v ../rtl/regfile.v
+attrmap -tocase keep -imap keep="true" keep=1 -imap keep="false" keep=0 -remove keep=0
+synth_ecp5 -abc9  -json top.json -top c2soc

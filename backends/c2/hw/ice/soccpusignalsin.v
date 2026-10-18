@@ -2,3 +2,9 @@
 `ifdef ICE_DEBUG
 .PCdebug(PCdebug),
 `endif
+`ifdef ICE_STEPPERS
+  .STEPPER1(STEPPER1),
+  .STEPPER2(STEPPER2),
+  .STEPPER3(STEPPER3),
+  .STEPPER4(STEPPER4),
+`endif

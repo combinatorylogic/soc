@@ -18,7 +18,7 @@ include Vc2soc.mk
 #######################################################################
 # Compile flags
 
-CPPFLAGS += -DVL_DEBUG=1 -std=c++11
+CPPFLAGS += -DVL_DEBUG=1 -std=c++17
 ifeq ($(CFG_WITH_CCWARN),yes)	# Local... Else don't burden users
 CPPFLAGS += -DVL_THREADED=1
 CPPFLAGS += -W -Werror -Wall

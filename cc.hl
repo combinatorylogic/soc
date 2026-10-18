@@ -6,6 +6,8 @@ include "./clike/backend/ll-ast.hl"
 
 litinclude ("./doc/emit") "./backends/c2/emit.hl"
 
+include "./backends/opc7/emit.hl"
+
 define cmdline_imul = mkref(true)
 define arch = mkref('small1')
 define subarch = mkref('none')
@@ -18,6 +20,7 @@ function prepare(env, mdl) {
              if (filter cc as match cc with 'hls'() -> true)
                  prep_hls(hlsenv, env, %generic-filepath("."), node, name)
              else if (deref( %llvm-optimise )) {
+                    println('OOOOOOOOO'(node));
                    <g2tp:g2> = ll_genssa_opt(env, node);
                     // Do it here for now, later the backend may want to see some
                     //  pragmas too.
@@ -26,7 +29,7 @@ function prepare(env, mdl) {
            } else node
        |  else -> node}}}
 
-function ir2backend_small1(mdl, fnm)
+function ir2backend_small1(mdl, fnm, prevmdl)
 {
  try {
   try {
@@ -34,7 +37,7 @@ function ir2backend_small1(mdl, fnm)
     ir2mdl = map m in mdl do %ir0->ir2(m);
     p1 = ir2_bodypass(ir2mdl, il2ssa_fullssa);
     px = prepare(ll_module_types(ir2mdl), p1);
-    p2 = small1_backend_passes(px,fnm);
+    p2 = small1_backend_passes(px,fnm, prevmdl);
     return p1
   } catch (t_MBaseException e) {
     println(mbaseerror(e));
@@ -47,14 +50,54 @@ function ir2backend_small1(mdl, fnm)
  }
 }
 
-function ir2backend_c2(mdl, fnm)
+function ir2backend_c2_prep(addmeta, topentry, fnm) {
+ //try {
+ // try {
+    ir2mdl = [%ir0->ir2(topentry)];
+    iter m in ir2mdl do addmeta(m);
+    p1 = ir2_bodypass(ir2mdl, il2ssa_fullssa);
+    px = prepare(ll_module_types(ir2mdl), p1);
+    return px;
+ /*   
+   } catch (t_MBaseException e) {
+     println(mbaseerror(e));
+     println(%->s(e));
+     exit(-1);
+  }
+  } catch (t_Exception e) {
+   println(%->s(e));
+   exit(-1)
+ } */
+}
+
+function ir2backend_c2(mdl, fnm, prevmdl)
+{
+// try {
+//  try {
+    p2 = c2_driver_mdl(mdl,fnm, prevmdl);
+    return mdl
+/*
+  } catch (t_MBaseException e) {
+    println("MBEXCEPTION!");
+    println(%->s(e));
+    println(mbaseerror(e));
+    exit(-1);
+  }
+ } catch (t_Exception e) {
+   println("EXCEPTION!");
+   println(%->s(e));
+   exit(-1)
+ } */
+}
+
+function ir2backend_opc7(mdl, fnm, prevmdl)
 {
  try {
   try {
     ir2mdl = map m in mdl do %ir0->ir2(m);
     p1 = ir2_bodypass(ir2mdl, il2ssa_fullssa);
     px = prepare(ll_module_types(ir2mdl), p1);
-    p2 = c2_driver_mdl(px,fnm);
+    p2 = i3a_driver_mdl(px,fnm);
     return p1
   } catch (t_MBaseException e) {
     println(mbaseerror(e));
@@ -67,14 +110,47 @@ function ir2backend_c2(mdl, fnm)
  }
 }
 
-function clike_compile_files(mdname, fls)
+define prep_hook = mkref([])
+
+function clike_compile_files(mdname, fls) {
+ try {
+  try {
+    return clike_compile_files_inner(mdname, fls)
+  } catch (t_MBaseException e) {
+    println('MBASEERROR'(mbaseerror(e)));
+    println(%->s(e));
+    exit(-1);
+  }
+ } catch (t_Exception e) {
+   println(%->s(e));
+   exit(-1)
+ }
+}
+
+function clike_compile_files_inner(mdname, fls)
 {
   nollvm = true;
   {match ^arch with 
       'small1' -> ir2backend_hook := ir2backend_small1
-    | 'c2' -> ir2backend_hook := ir2backend_c2
+    | 'c2' -> {prep_hook := ir2backend_c2_prep; ir2backend_hook := ir2backend_c2}
+    | 'opc7' -> ir2backend_hook := ir2backend_opc7
     | else -> ccerror('UNKNOWN-ARCH'(^arch))};
-  mdl = llvm_init_module(mdname);
+  mdl =
+     collector(addmeta, getmeta)
+     collector(add, get) {
+       prep = deref(prep_hook);
+       addpost(c) = {
+          if(prep) iter a in prep(addmeta, c, mdname) do add(a)
+          else add(c);
+       };
+       prevmdl = mkref([]);
+      getter() = {
+        nw = deref(prevmdl) :: getmeta();
+        prevmdl := nw;
+        return nw
+      };
+      [addpost;get;mdname;getter]
+  };
   env = clike_global_env();
   %read-int-eval('define'('clike-current-env',#`(quote ,env)));
   %read-int-eval('define'('clike-current-llvm-env',#`(quote ,mdl)));
@@ -97,7 +173,10 @@ collector(fadd,fget) {
  do loop(a = %a->l( %*CMDLINE* )) {
     match a with
       ["/out";mdlname;@rest] -> {mname := mdlname;loop(rest)}
-    | ["/arch";archname;@rest] -> {arch := %Sm<<(archname); loop(rest)}
+    | ["/arch";archname;@rest] -> {
+         arch := %Sm<<(archname);
+         if (archname == "c2") ll_hls_config_ramsignals := 1;
+         loop(rest)}
     | ["/subarch";subname;@rest] ->
             {subarch := %Sm<<(subname);
              if (subarch === 'ice40') { // some defaults
@@ -131,8 +210,9 @@ collector(fadd,fget) {
                ["Usage: clikecc [option...] file.c...";
                 "Options:";
                 "   /out <modulename>   : save bitcode to a given module";
-                "   /arch small1|c2     : select target CPU";
-                "   /subarch ice40|spartan6|artix7";
+                "   /arch small1|c2|opc7";
+                "                       : select target CPU";
+                "   /subarch ice40|spartan6|artix7|cyclone5|cyclone4";
                 "                       : select target hardware configuration";
                 "   /imul               : enable IMUL and the other extended instructions (Small1)";
                 "   /noimul             : disable IMUL and the other extended instructions (Small1)";

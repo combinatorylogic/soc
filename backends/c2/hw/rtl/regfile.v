@@ -3,7 +3,9 @@
 `include "defines.v"
 
 `ifndef ICE
+`ifndef CYCLONEV
  `define REGFILE_REGISTERED_OUT 1
+`endif
 `endif
 
 module regfile
@@ -74,6 +76,14 @@ module regfile
          out1 <= out1_next;
          out2 <= out2_next;
 `endif
+
+`ifdef SIMULATION	 
+	 if (addrw == 29 && wdata < 1024) begin
+	    $display("SP OFF!!!!!");
+	    $finish;
+	 end
+`endif
+	 
          if (dbgreg_en)
            $write("[R%0d=%0d]", dbgreg, mem[dbgreg]);
       end

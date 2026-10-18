@@ -36,7 +36,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 `default_nettype none
 
-`define CLKFREQ   35250000    // frequency of incoming signal 'clk'
+`define CLKFREQ   `ICEFREQ    // frequency of incoming signal 'clk'
 `define BAUD      115200
 
 // Simple baud generator for transmitter
@@ -239,6 +239,24 @@ module outpin(
   input we,
   input wd,
   output rd);
+
+  SB_IO #(.PIN_TYPE(6'b0101_01)) _io (
+        .PACKAGE_PIN(pin),
+        .CLOCK_ENABLE(we),
+        .OUTPUT_CLK(clk),
+        .D_OUT_0(wd),
+        .D_IN_0(rd));
+endmodule
+
+module outpin2(
+  input  clk,
+  output pin,
+  input  we,
+  input  wd);
+
+
+  wire  rd;
+   
 
   SB_IO #(.PIN_TYPE(6'b0101_01)) _io (
         .PACKAGE_PIN(pin),

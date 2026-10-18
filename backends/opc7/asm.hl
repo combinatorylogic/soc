@@ -1,0 +1,49 @@
+% literate:
+
+
+\subsection{OPC7 assembly}
+
+\pfcode{
+ast i3aasm {
+   instr = aluop(aop:op, reg:a, reg:b, reg:dst, expr:immed)
+         | jmp(expr:lbl)
+         | jmpr(expr:lbl)
+         | jmpc(reg:a, expr:lbl)
+         | jmpci(reg:a, reg:dst, expr:immed)
+         | ldimmed(reg:dst, expr:v)
+         | ext(eop10:op, reg:a, reg:b, reg:dst)
+         | ext2(eop32:op)
+         | load(reg:dst, reg:src, expr:off)
+         | store(reg:dst, reg:v, expr:off)
+         | storei(reg:dst, reg:v, expr:inc)
+
+         | nop()
+         | dbgnop(reg:src)
+
+         // Macros
+         | call(expr:lbl)
+         | ret()
+         | touch(reg:dst)
+         | mov(reg:src, reg:dst)
+         | iret()
+         ;
+    reg is (.rnumber:id);
+    expr  = const(number:n)
+          | zero()
+          | label(ident:id)
+          | rel(ident:id)
+          | binop(op:o, expr:a, expr:b)
+          ;
+    entry = i(instr:i, .*pos:p)
+          | label(ident:lbl)
+          | globlabel(ident:lbl)
+          | data(.*expr:ds)
+          | align(number:n)
+          // After alignments are resolved:
+          | skip(number:n)
+          ;
+}}
+
+
+
+%%%%%%%%%

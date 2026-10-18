@@ -56,7 +56,21 @@ function c2_legalise_binops(types, mdl)
               else
                 if(isone(r)) node
                 else 'call'('_SHR',l,r)
+         | 'FMul'   ->
+              'call'('_FMUL', l, r)
+         | 'FAdd'   ->
+              'call'('_FADD', l, r)
+         | 'FSub'   ->
+              'call'('_FSUB', l, r)
+         | 'FDiv'   ->
+              'call'('_FDIV', l, r)
          | else    -> node}}
+     | convop -> {
+        match op with
+           'SIToFP' -> 'call'('_SITOFP', v) // TODO: ignoring destination type for now
+         | 'FPToSI' -> 'call'('_FPTOSI', v) // TODO: ignoring destination type for now
+         | else -> node
+        }
      | icmp -> {
          case vcond {
            'EQ'    -> node
@@ -69,6 +83,11 @@ function c2_legalise_binops(types, mdl)
          | 'SLT'  -> node
          | 'ULE'  -> iscmp(node,'call'('_ULE',lhs,rhs))
          | 'SLE'  -> iscmp(node,'call'('_SLE',lhs,rhs))
+         | else -> node}}
+        
+    | fcmp -> {case vcond {
+           'EQ'    -> node
+         | 'OGT'  -> 'call'('_OGT',lhs,rhs)
          | else -> node}}
       | else -> node
      }};

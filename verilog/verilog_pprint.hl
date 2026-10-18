@@ -18,7 +18,7 @@ function verilog_pprint_inner(v)
      | moduleItem -> v
      };
      deep description {
-       module -> ["module ";nm;" (";interleave(ports,",\n");");\n";body;"\nendmodule\n"]
+       module -> ["module ";nm;" (";interleave(car(ports),",\n");");\n";body;"\nendmodule\n"]
      | else -> ["/* ";%S<<(node);" */"]
      };
      deep port {
@@ -40,7 +40,7 @@ function verilog_pprint_inner(v)
        a -> [l; " = "; r]
      };
      deep parameterValueAssignment {
-        va -> cs
+        va -> ["#";cs]
      };
      deep listOfModuleConnections {
         none -> []

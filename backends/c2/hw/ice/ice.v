@@ -1,3 +1,7 @@
+`include "../rtl/gendelay2.v"
+`define STR(a) `"a`"
+
+
 module uartmm(input clk,
               input             rst,
 
@@ -8,7 +12,7 @@ module uartmm(input clk,
               output reg        strobe_b,
               input [31:0]      addr_b,
               input [31:0]      data_b_in,
-              input [31:0]      data_b_we);
+              input             data_b_we);
 
    wire [7:0]                uart_din;
    wire                      uart_valid;
@@ -28,6 +32,42 @@ module uartmm(input clk,
    wire                     uart_busy;
 
    assign uart_ready = ~uart_busy;
+
+   // ToDO: insert FIFOs
+
+   /*
+   wire [7:0]                uart_din0;
+   wire                      uart_valid0;
+   wire                      uart_rd0;
+   wire                      uart_qin_full;
+   wire                      uart_qin_empty;
+   gendelayqueue #(.WIDTH(8),.DEPTH(10))
+     qin (.clk(clk),
+          .rst(rst),
+          .we(uart_valid0),
+          .idata(uart_din0),
+          .re(uart_rd0),
+          .wdata(uart_din),
+          .oready(uart_valid),
+          .full(uart_qin_full),
+          .empty(uart_qin_empty));
+
+   wire                       uart_wr0;
+   wire [7:0]                 uart_dout0;
+   wire                       uart_busy0;
+   wire                       uart_qout_empty;
+   
+   gendelayqueue #(.WIDTH(8),.DEPTH(4))
+     qout (.clk(clk),
+           .rst(rst),
+           .we(uart_wr),
+           .idata(uart_dout),
+           .re(uart_qout_re & ~uart_busy0),
+           .wdata(uart_dout0),
+           .oready(uart_qout_re),
+           .full(uart_busy),
+           .empty(uart_qout_empty));
+*/
    
    buart _uart (
                 .clk(clk),
@@ -45,7 +85,7 @@ module uartmm(input clk,
    wire [31:0]              data_b_next;
    
 
-   assign strobe_b_next =   (addr_b == 65537) | (addr_b == 65538) | (addr_b == 65539);
+   assign strobe_b_next =   !data_b_we & ((addr_b == 65537) | (addr_b == 65538) | (addr_b == 65539));
    assign data_b_next = (addr_b == 65537)?uart_valid_r:
                         (addr_b == 65538)?uart_ready_r:
                         (addr_b == 65539)?uart_din_r:0;
@@ -56,24 +96,20 @@ module uartmm(input clk,
         uart_rd <= 0;
         uart_valid_r <= 0;
         uart_din_r <= 0;
-        uart_dout <= 0;
+        uart_dout <= 36;
         strobe_b <= 0;
         data_b <= 0;
         
      end else begin
         strobe_b <= strobe_b_next;
         data_b <= data_b_next;
-        
-        if (uart_wr) begin
-           uart_wr <= 0;
-        end
-        
-        if (uart_valid & ~uart_rd) begin
-           uart_rd <= 1; // TODO: read into a FIFO / raise an IRQ (when we had a support for them)
-        end
-
         uart_ready_r <= uart_ready; // delay
 
+        if (uart_valid & ~uart_rd) begin
+           uart_rd <= 1; // TODO: read into a FIFO / raise an IRQ (when we had a support for them)
+        end else if (uart_wr) begin
+           uart_wr <= 0;
+        end else
         if (uart_rd) begin
            uart_rd <= 0;
            uart_din_r <= uart_din;
@@ -81,22 +117,41 @@ module uartmm(input clk,
         end else if ((addr_b == 65539) & ~data_b_we & uart_valid_r) begin
            uart_valid_r <= 0;
         end else if ((addr_b == 65539) & data_b_we & uart_ready & ~uart_wr) begin
-           uart_dout <= data_b[7:0];
+           uart_dout <= data_b_in[7:0];
            uart_wr <= 1;
         end
+
+        /*
+        if ((addr_b == 65539) & data_b_we & uart_ready & ~uart_wr) begin
+           uart_dout <= data_b_in[7:0];
+           uart_wr <= 1;
+        end else uart_wr <= 0;
+        */
+        
+
+        /*
+        if (uart_wr)
+          uart_wr <= 0;
+        else if (uart_ready)
+          begin uart_wr <= 1;
+             uart_dout <= 36;
+             
+          end
+        */
+       
      end
    
 
 endmodule
 
 module ledwriter (input clk,
-                  input rst,
+                  input            rst,
 
                   output reg [7:0] LED,
                   
                   input [31:0]     addr_b,
                   input [31:0]     data_b_in,
-                  input [31:0]     data_b_we);
+                  input            data_b_we);
 
    always @(posedge clk)
      if (~rst) begin
@@ -109,26 +164,29 @@ module ledwriter (input clk,
 endmodule
 
 
-// TODO:
-// implement a 2-port RAM by using a double clock frequency + a single port
-module socram(input clk,
-              input             rst,
+// 2x clock inner 2-port BRAM (1 read 1 write)
+module innerdpram(input clk,
+                  input             rst,
 
-              output reg [31:0] data_a,
-              input [31:0]      addr_a,
-              
-              output reg [31:0] data_b,
-              output reg        strobe_b,
-              input [31:0]      addr_b,
-              input [31:0]      data_b_in,
-              input [31:0]      data_b_we);
+                  input [31:0]      ip0_addr,
+                  output reg [31:0] ip0_data,
 
-   parameter RAM_DEPTH = 1024;
-`ifdef ENABLE_EXT
+                  input [31:0]      ip1_addr,
+                  input [31:0]      ip1_datain,
+                  input             ip1_we);
+   
+
+   parameter RAM_DEPTH = 12;
+`ifdef INIT_FILE_PATH
+   parameter INIT_FILE = `STR(`INIT_FILE_PATH);
+`else  
+ `ifdef ENABLE_EXT
    parameter INIT_FILE = "../../custom_ice.hex";
-`else
+ `else
    parameter INIT_FILE = "ram.hex";
+ `endif
 `endif
+//   parameter INIT_FILE = "rama.hex";
    
    reg [31:0]                   mem [0:RAM_DEPTH-1];
    
@@ -136,17 +194,68 @@ module socram(input clk,
       if (INIT_FILE != "")
          $readmemh(INIT_FILE, mem);
    end
-
    
    always @(posedge clk)
      begin
-        if (data_b_we & (addr_b[31:16] == 0)) begin
-           mem[addr_b] <= data_b_in;
+        if (ip1_we) begin
+           mem[ip1_addr] <= ip1_datain;
         end
-        data_a <= mem[addr_a];
-        data_b <= mem[addr_b];
-        strobe_b <= (addr_b[31:16] == 0);
+        ip0_data <= mem[ip0_addr];
      end
+endmodule // innerdpram
+
+`include "../rtl/dportram.v"
+
+module socram(input clk,
+              input clk2x,
+              input         rst,
+
+              output [31:0] data_a,
+              input [31:0]  addr_a,
+              
+              output [31:0] data_b,
+              output reg    strobe_b,
+              input [31:0]  addr_b,
+              input [31:0]  data_b_in,
+              input [31:0]  data_b_we);
+
+   parameter RAM_DEPTH = 2048;
+`ifdef INIT_FILE_PATH
+   parameter INIT_FILE = `STR(`INIT_FILE_PATH);
+`else  
+ `ifdef ENABLE_EXT
+   parameter INIT_FILE = "../../custom_ice.hex";
+ `else
+   parameter INIT_FILE = "ram.hex";
+ `endif
+`endif
+
+   wire                         strobe_next;
+   assign strobe_next = (addr_b[31:16] == 0);
+   wire                         wx;
+   assign wx = (data_b_we[0] & strobe_next);
+   
+
+   bram2x #(.RAM_DEPTH(RAM_DEPTH),
+            .INIT_FILE(INIT_FILE)) 
+   b2 (.clk2x(clk2x),
+              .clk(clk),
+              .rst(rst),
+
+              .p0_addr(addr_a),
+              .p0_data(data_a),
+
+              .p1_addr(addr_b),
+              .p1_data(data_b),
+
+              .p2_addr(addr_b),
+              .p2_datain(data_b_in),
+              .p2_we(wx));
+   
+   always @(posedge clk)
+     if (!rst)
+       strobe_b <= 0;
+     else strobe_b <= strobe_next;
    
 endmodule
 

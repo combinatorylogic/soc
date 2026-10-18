@@ -1,0 +1,57 @@
+* SDF acceleration in hardware:
+
+
+** What can we get from static scheduling?
+
+*** Sample issue module
+*** Primitive SDF pipelines
+*** Simple ALU pipelines
+*** Instruction decoding
+*** Instruction memory
+
+
+Instructions:
+
+E.g., scene is made of a box - sphere.
+
+dist = diff(box(sample, 1.0), sphere(sample, 1.0));
+
+Pseudo-code:
+    LDIMMED $SR, 1.0f
+    SPHERE_SDF $R2, $SR, $R1 ; BOX_SDF $R3, $SR, $R1
+    DIFF_SDF $R4, $R2, $R3
+
+
+All the common SDF functions have different pipeline lengths;
+
+
+** Common SDFs:
+*** Sphere:
+#+BEGIN_SRC
+float sdSphere( vec3 p, float s )
+{
+  return length(p)-s;
+}
+#+END_SRC
+
+I.e., in hardware - 3 multiplications, 2 additions, 1 square root and 1 more addition
+
+*** Box:
+#+BEGIN_SRC
+float sdBox( vec3 p, vec3 b )
+{
+  vec3 d = abs(p) - b;
+  return length(max(d,0.0))
+         + min(max(d.x,max(d.y,d.z)),0.0); // remove this line for an only partially signed sdf 
+}
+#+END_SRC
+
+abs, addition, comp, 3 multiplications, 2 additions, square root, 3 comp, ...
+
+*** Cylinder:
+#+BEGIN_SRC
+float sdCylinder( vec3 p, vec3 c )
+{
+  return length(p.xz-c.xy)-c.z;
+}
+#+END_SRC

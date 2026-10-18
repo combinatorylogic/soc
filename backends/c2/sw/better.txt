@@ -1,0 +1,41 @@
+A better approach to feeding the compute cores and processing their output:
+
+- Build a queue with input parameters (cx, cy - others like dx are fixed) and
+  output parameters (vmem offset?)
+
+- Feed the queue from software
+
+- A constantly running core would feed a head of the queue to any free compute
+  core. When core is ACKed, the output is added into the output queue. If the queue
+  is full, we do not re-issue this core until queue is available.
+
+  At the other end of the output queue is blitter core, writing back to memory
+  (in our case, vram).
+
+
+
+What is more important, this approach is universal and does not depend
+on the core output width (i.e., pipeline depth).
+
+We can abstract it further for all kernels that blit their output (which must
+be pretty much all possible kernels anyway).
+
+----
+
+More details:
+
+Feeding an input, stalling if the queue is full:
+
+  inline verilog exec(offset) {
+    r_offset <= offset;
+  } wait(queue_a) { queue_req <= 0; };
+  inline verilog exec(cx, cy) {
+     queue_in <= {cx, cy, r_offset};
+     queue_req <= 1;
+  } wait (1) {
+     queue_req <= 0;
+  };
+
+
+In our case, there is an additional issue with half-byte outputs...
+

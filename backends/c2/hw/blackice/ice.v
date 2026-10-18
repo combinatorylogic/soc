@@ -262,4 +262,3 @@ endmodule // hls_MulFSM
 `ifdef ENABLE_SOUND
  `include "soundctl.v"
 `endif
-

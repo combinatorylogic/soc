@@ -13,7 +13,7 @@ include "./legalise.hl"
 
 \phcode{
 define c2_enable_muops = mkref([])
-define c2_ram_end = mkref(16384)
+define c2_ram_end = mkref(16383)
 }
 
 \section{An optimising C2 backend}
@@ -384,6 +384,7 @@ function c2_mkbinop(op, dst, l, r) {
     | 'Sub' -> 'aluop'('sub', l, r, 'vreg'(dst), 'zero'())
     | 'And' -> 'aluop'('and', l, r, 'vreg'(dst), 'zero'())
     | 'Or' -> 'aluop'('or', l, r, 'vreg'(dst), 'zero'())
+    | 'Xor' -> 'aluop'('xor', l, r, 'vreg'(dst), 'zero'())
     | 'LShr' -> 'aluop'('shr', l, r, 'vreg'(dst), 'zero'())
     | 'AShr' -> 'aluop'('ashr', l, r, 'vreg'(dst), 'zero'())
     | 'Shl' -> 'aluop'('shl', l, r, 'vreg'(dst), 'zero'())
@@ -519,7 +520,7 @@ function c2_lower_call(firstargs, dst, fn, args) {
        'storei'('reg'('SP'), 'reg'('PC'), 'const'(-1));
        'jmp'('label'(fn))];
     'move_macro'('vreg'(dst), 'reg'('R2'));
-    @if (stackargs) ['aluop'('add', 'SP', 'R0', 'SP', 'const'(length(stackargs)))];
+    @if (stackargs) ['aluop'('add', 'reg'('SP'), 'reg'('R0'), 'reg'('SP'), 'const'(length(stackargs)))];
     'abi_restorereg_macro'(cnm);
     @map [src;dst] in saveargs do 'move_macro'(dst, src)
     ]
@@ -574,6 +575,10 @@ function c2_lower_ir(src) {
        | else -> ccerror('UNSUPPORTED-YET'(node))};
       deep irval {
          integer -> 'const'(v)
+       | float -> {
+           fl = float_to_int(v);
+           println('FLOAT_CONST'(v, fl));
+           'const'(float_to_int(v))}
        | zero -> 'const'(0)
        | var     -> 'vreg'(nm)
        | global  -> if(nm === '*FP*') 'reg'('FP') else 'label'(nm)
@@ -585,6 +590,7 @@ function c2_lower_ir(src) {
 
 \pfcode{
 function c2_lower_args(src) {
+  println('LLLL'(src));
   argsh = mkhash();
   visit:ir2isa (irtoplevel: src) {
      deep irtoplevel {
@@ -598,6 +604,7 @@ function c2_lower_args(src) {
 
   // TODO: if the same argument is used more than once in this instruction, only load it once
   doinstr(add, i) = {
+  println('I'(i));
      visit:ir2isa (c2instr: i) {
         once c2val {
            vreg -> 
@@ -768,10 +775,16 @@ function c2_regalloc(src) {
 
 \subsection{Spills}
 
+Register allocation colours the virtual registers; here the colours are mapped to the physical
+registers R6 to R28. When there are more colours than registers, the 20 most used colours get R6 to
+R25, the others live in frame slots appended after the allocas (an extra alloca grows the frame in
+the macro lowering), and every instruction that touches a spilled colour loads its sources into
+R26 to R28 before and stores its destination back after. Without spills the mapping is unchanged.
+
 \pfcode{
 function c2_spills(src) {
-   // TODO!!!
    nargs = mkref(0);
+   counts = mkhash();
    getvregs() = {
       vrs = mkhash();
       visit:ir2isa(irtoplevel: src) {
@@ -779,20 +792,87 @@ function c2_spills(src) {
             %function -> nargs := length(args)
           | else -> []};
          once c2val {
-            vreg -> ohashput(vrs, nm, nm)
+            vreg -> { ohashput(vrs, nm, nm);
+                      c = ohashget(counts, nm);
+                      ohashput(counts, nm, if (c) c + 1 else 1) }
           | else -> []}};
       hashmap(fun(k,v) k, vrs)};
-   vregs = getvregs();
-   if (length(vregs) > 23) {
-      ccerror('TODO:IMPLEMENT-SPILLING'(vregs))
-   };
+   vregs0 = getvregs();
+   // most used colours first, so that they are the ones kept in registers
+   vregs = map [c;v] in qsort(fun(a, b) (car(a) > car(b)), map v in vregs0 do [ohashget(counts, v); v]) do v;
+   nvregs = length(vregs);
+   nregsall = 23;
+   spillp = nvregs > nregsall;
+   nregs = if (spillp) 20 else nregsall;
+   scratch = ['R26'; 'R27'; 'R28'];
+   alloc = mkref(0);
+   iter:ir2isa(irtoplevel: src) {
+      once c2instr {
+         alloca -> alloc := ^alloc + size
+       | else -> []}};
    vrmap = mkhash();
-   rstart = 6;// if(^nargs > 2) 6 else 3+^nargs;
-   iter v in vregs count i do ohashput(vrmap, v, %Sm<<('R', rstart+i));
-   visit:ir2isa(irtoplevel:src) {
-      deep c2val {
-         vreg -> 'reg'(ohashget(vrmap, nm))
-       | else -> node}}}}
+   iter v in vregs count i do
+      if (i < nregs) ohashput(vrmap, v, 'reg'(%Sm<<('R', 6 + i)))
+      else ohashput(vrmap, v, 'slot'(0 - (^alloc + (i - nregs))));
+   nspill = if (spillp) nvregs - nregs else 0;
+   if (spillp) println('C2-SPILLS'(nspill, nvregs));
+   if (not(spillp)) {
+      visit:ir2isa(irtoplevel:src) {
+         deep c2val {
+            vreg -> ohashget(vrmap, nm)
+          | else -> node}}
+   } else {
+      firstbb = car(collector(add, get) {
+         visit:ir2isa(irtoplevel: src) { once irbblock { bblock -> add(name) }};
+         get()});
+      doinstr(i) =
+        collector(pre, getpre)
+        collector(post, getpost) {
+          used = mkref([]);
+          srcv(v) = match v with
+             'vreg'(nm) -> (match ohashget(vrmap, nm) with
+                              'reg'(r) -> 'reg'(r)
+                            | 'slot'(off) -> {
+                                 // the slot address is formed in the scratch register first: the
+                                 // load/store offset field is not relied on for negative offsets
+                                 sc = nth(length(^used), scratch);
+                                 used := sc : ^used;
+                                 pre('aluop'('add', 'reg'('FP'), 'reg'('R0'), 'reg'(sc), 'const'(off)));
+                                 pre('load'('reg'(sc), 'reg'(sc), 'zero'()));
+                                 'reg'(sc)})
+           | else -> v;
+          dstv(v) = match v with
+             'vreg'(nm) -> (match ohashget(vrmap, nm) with
+                              'reg'(r) -> 'reg'(r)
+                            | 'slot'(off) -> {
+                                 free = filter sc in scratch as not(memq(sc, ^used));
+                                 sc = if (free) car(free) else car(scratch);
+                                 // the slot address goes into another scratch register: the sources
+                                 // have been consumed by the instruction by then
+                                 ar = car(filter s in scratch as not(s === sc));
+                                 post('aluop'('add', 'reg'('FP'), 'reg'('R0'), 'reg'(ar), 'const'(off)));
+                                 post('store'('reg'(ar), 'reg'(sc), 'zero'()));
+                                 'reg'(sc)})
+           | else -> v;
+          ni = match i with
+             'load'(dst, ptr, imm) -> { p1 = srcv(ptr); d1 = dstv(dst); 'load'(d1, p1, imm) }
+           | 'store'(ptr, v, imm) -> { p1 = srcv(ptr); v1 = srcv(v); 'store'(p1, v1, imm) }
+           | 'storei'(ptr, v, imm) -> { p1 = srcv(ptr); v1 = srcv(v); 'storei'(p1, v1, imm) }
+           | 'jmpc'(cnd, l) -> 'jmpc'(srcv(cnd), l)
+           | 'aluop'(op, l, r, dst, imm) -> { l1 = srcv(l); r1 = srcv(r); d1 = dstv(dst); 'aluop'(op, l1, r1, d1, imm) }
+           | 'select_macro'(dst, vif, vthen, velse) -> {
+                a1 = srcv(vif); b1 = srcv(vthen); c1 = srcv(velse); d1 = dstv(dst);
+                'select_macro'(d1, a1, b1, c1) }
+           | 'move_macro'(dst, sv) -> { s1 = srcv(sv); d1 = dstv(dst); 'move_macro'(d1, s1) }
+           | 'mov'(sv, dst) -> { s1 = srcv(sv); d1 = dstv(dst); 'mov'(s1, d1) }
+           | 'touch'(dst) -> 'touch'(srcv(dst))
+           | 'ret_macro'(v) -> 'ret_macro'(srcv(v))
+           | else -> i;
+          return getpre() :: [ni] :: getpost()};
+      visit:ir2isa(irtoplevel: src) {
+         deep irbblock {
+            bblock -> mk:node(ss = (if (name === firstbb) ['alloca'(nspill)] else [])
+                                   :: map append s in ss do doinstr(s))}}}}}
 
 \subsection{Macro and ABI lowering}
 
@@ -893,6 +973,57 @@ function c2_lower_macros(src) {
             ]}
       | else -> [node]
      }}}}
+
+
+\pfcode{
+function c2_remove_redundant_movs(top) {
+   visit:ir2isa(irtoplevel:top) {
+      deep irbblock {
+        bblock -> mk:node(ss = map append s in ss do s)};
+      deep c2instr {
+        mov -> {match [src;dst] with [reg(X1);reg(X2)] -> if (X1==X2) [] else [node] | else -> [node]}
+      | else -> [node]}}}}
+
+\subsection{Further legalise ldimmed instructions}
+
+\pfcode{
+
+// TODO!!!! Must do it before ldimmeds stage, i.e., recognise move_macro arguments
+// instead.
+function n_rshift(a, b)
+  notnet(int a, int b)
+    {leave a>>b;}
+
+function abs(i) {
+  if(i>0) i else 0-i;
+}
+    
+function c2_legalise_ldimmeds(addtop, src)
+{
+   check_immed_value(v0) = {
+      println('check_immed'(v0));
+      v = match v0 with zero() -> 0 | const(x) -> x | else -> 0;
+      if (abs(v) > 33554431) { // won't fit in 25 bits
+             // [n_rshift(v, 25); n_bitand(v, 33554431)]
+            'poo'(v)
+      } else 'ok'(v)
+   };
+   visit:ir2isa(irtoplevel: src) {
+      deep irbblock {
+         bblock -> mk:node(ss = map append s in ss do s)};
+      deep c2instr {
+         move_macro -> {
+           match src with
+             'const'(x) -> {
+            vx = check_immed_value(src);
+            match vx with
+              ok(one) -> [node]
+            | poo(one) -> symbols(ptr, n1) { // two instr load
+              addtop('label'(ptr)); addtop('data'('const'(one)));
+              [ 'move_macro'('vreg'(n1), 'label'(ptr));
+                'load'(dst, 'vreg'(n1), 'zero'())]}}
+          | else -> [node]}
+       | else -> [node]}}}}
 
 \subsection{Hazard management}
 
@@ -1088,16 +1219,17 @@ ROMs, so every word counts).
 \subsection{Driver}
 
 \pfcode{
-function c2_driver(src) {
+function c2_driver(addtop, src) {
    t1 = c2_gep_elaboration(src);
    t2 = c2_out_of_ssa(t1);
    t3 = c2_lower_ir(t2);
    t3x = c2_lower_args(t3);
-   t4 = c2_legalise_immediates(t3x);
+   t4 = c2_legalise_ldimmeds(addtop, c2_legalise_immediates(t3x));
    t5 = c2_regalloc(t4);
    t6 = c2_spills(t5);
    t7 = c2_lower_macros(t6);
-   t8 = c2_fix_labels(c2_flatten(t7));
+   t71 = c2_remove_redundant_movs(t7);
+   t8 = c2_fix_labels(c2_flatten(t71));
    t8x = c2_cleanup_trivial(t8);
    t9 = c2_schedule(t8x);
    return t9;
@@ -1132,7 +1264,8 @@ function c2_emit_data(e)
      deep irval {
         array -> map append e in elts do e
       | integer -> ['const'(v)]
-      | zero -> ['const'(0)]
+      | zero -> { len = c2_type_size(t);
+                  map i in [0..len] do 'const'(0) }
       | else -> ccerror('todo'(node))};
      deep irtoplevel {
         global ->
@@ -1142,16 +1275,17 @@ function c2_emit_data(e)
 
 
 \pfcode{
-function c2_driver_mdl(mdl0, fnm)
+function c2_driver_mdl(mdl0, fnm, prevmdl)
 collector(vladd, vlget) {
    mdl = c2_lift_strings(mdl0);
    envtypes = ll_propagate_types(mdl);
    mdl_pre = hoist_inlined_verilog(vladd, mdl, ['exec_arg2';'exec_arg1'], fun(iid, icrc) iid);
+   iter i in mdl_pre do println('OOO1'(i));
   <[env;types]> = envtypes;
    mdl1 = c2_legalise_terms(c2_legalise_binops(types, mdl_pre));
-   mdl1x =  ir2_inline(c2_inline_pred, mdl1);
-   mdl1y =  ir2_inline(c2_inline_pred, mdl1x);
-   mdl1z =  ir2_inline(c2_inline_pred, mdl1y);
+   mdl1x =  ir2_inline(c2_inline_pred, mdl1, prevmdl);
+   mdl1y =  ir2_inline(c2_inline_pred, mdl1x, prevmdl);
+   mdl1z =  ir2_inline(c2_inline_pred, mdl1y, prevmdl);
    mdl1zz = ir2_bodypass(mdl1z, il2ssa_fullssa);
    mdl1f =  c2_optimise_again(mdl1zz);
    envtypes = ll_propagate_types(mdl1f);
@@ -1160,7 +1294,9 @@ collector(vladd, vlget) {
    asm0 = map append t in mdl2 do 
      visit:ir2 (irtoplevel: t) {
         once irtoplevel {
-          %function -> if (body && not(c2_inline_pred(node))) c2_driver(node) else []
+          %function -> if (body && not(c2_inline_pred(node)))
+                       collector(addtop, gettop) {
+                          c2_driver(addtop, node)::gettop() } else []
         | comment -> []
         | global -> c2_emit_data(node)
         | else -> ccerror('UNSUPPORTED'(node))}};
@@ -1176,7 +1312,9 @@ collector(vladd, vlget) {
                  | else -> fprintln(fo, %S<<(node))}}}});
        s1 = c2exprs(ht, c2macros(c0));
    
-       out = map append s in s1 do c2encode_entry(s);
+       out = map append s in s1 do {
+          println('E'(s));
+          c2encode_entry(s)};
        hex(n) =
         .net(n): {
           leave ((Int32)n).ToString("x");

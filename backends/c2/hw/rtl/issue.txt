@@ -1,0 +1,104 @@
+
+
+A software side of the compute core task issuer should look like this:
+
+
+  float dxkernel = dx * (float)#kernel_width(mand_core);
+  #issue_threads_sync(mand_core, 4, (dx){cxstep = dx, ix = 0}, vram_blit) {
+     for (y = 0; y < 480; y++) {
+       for (x = 0; x < 640; x+= #kernel_width(mand_core)) {
+          #emit_task( cx0 = cx, cy = cy, blit_destination = (y<<16+x) );
+          cx += dxkernel;
+       }
+       cy += dy;
+     }
+  }
+
+
+This will generate an issue core with 4 mand_core instances,
+wrapped into a newly generated mand_core_wrapper module with fixed args
+cxstep and ix, and variable args cx0 and cy; also adding blit_destination
+packing x and y into a 32-bit vector.
+
+
+
+Macros expanded will look like this:
+
+float dxkernel = dx * (float)#kernel_width(mand_core);
+#compute_wrapper_instance(cores=4, packet=32+64, args=64, addr=16, outwidth=4, stages=#kernel_width(mand_core),
+                          issue=issue_mand_core, constarg=constarg, vararg=vararg, blitdest=blitdest, issue_available=issue_available,
+                          issue_req=issue_req,issue_iddle=issue_iddle);
+{
+ #setup_constargs(issue_mand_core, constarg, dx, (int32)0);
+
+ for (y = 0; y < 480; y++) {
+       for (x = 0; x < 640; x+= #kernel_width(mand_core)) {
+          #emit_task_inner( vararg = vararg, issue_req=issue_req,
+                            cx0 = cx, cy = cy, blit_destination = (y<<16+x) );
+          cx += dxkernel;
+       }
+       cy += dy;
+ }
+ #wait_task_sync(issue_mand_core);
+
+}
+Which futher expands into:
+
+
+inline verilog define { reg [63:0] constarg; };
+inline verilog define { reg [63:0] vararg; };
+inline verilog define { reg [31:0] blitdest; };
+inline verilog define { wire issue_available; };
+inline verilog define { wire issue_idle; };
+
+inline verilog define {
+  issue_mand_core #(.NUMBER_OF_CORES(4),
+                    .QUEUE_PACKET_LEN(32 + 64),
+                    .COMMON_ARGS_LEN(64),
+                    .BLIT_ADDR_WIDTH(16),
+                    .COMPUTE_OUT_WIDTH(4),
+                    .COMPUTE_OUT_STAGES(#kernel_width(mand_core)),
+                    )
+       core0
+    (.clk(clk),
+     .rst(rst),
+     .common_args(constarg),
+     .queue_data_in({blitdest, vararg}),
+     .queue_we(issue_req),
+     .queue_available(issue_available),
+
+     // ... - blit port signals
+     
+     .idle(issue_idle));
+    
+};
+
+float dxkernel = dx * (float)#kernel_width(mand_core);
+
+{
+inline verilog exec (dx) {
+   constarg <= {dx, 32'd0};
+} noreturn;
+
+     for (y = 0; y < 480; y++) {
+       for (x = 0; x < 640; x+= #kernel_width(mand_core)) {
+          inline verilog exec(cx, cy) {
+            vararg <= {cx, cy};
+          } noreturn;
+          int32 tmp = y<<16 + x;
+          inline verilog exec() {
+          } wait (issue_available) {} ;
+          inline verilog exec(tmp) {
+            blitdest <= tmp;
+            issue_req <= 1;
+          } wait(1) { issue_req <= 0; };
+          cx += dxkernel;
+       }
+       cy += dy;
+     }
+     inline verilog exec() { }
+       wait ( issue_id ) { };
+  }
+
+
+

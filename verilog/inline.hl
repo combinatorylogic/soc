@@ -54,9 +54,10 @@ representing it in between parsing and inline processing.
 
 \pfcode{
 ast vlinline {
-  itop = define(moduleItem:mi)
+  itop = define(.*moduleItem:mi)
        | reset(*vlgstatement:ss)
        | instance(ident:nm, *iportbind:ports)
+       | include(string:path)
        | usemodule(string:path)
        | execop(icvargs:a, *vlgstatement:ss,
               ioprest:rs)
@@ -92,11 +93,14 @@ Verilog parser is also inherited here.
 syntax of pfclike in clexpr, inner (verilog):
     ' inline verilog [clvinline]:i '
 + {
-       clvinline := { define "{" [moduleItem]:mi "}"  => define(mi)}
+       qstring := { "\" [ident]:id "\" => unquote(id) } / [string];
+          
+       clvinline := { define "{" eslist<[moduleItem]>:mi "}"  => define(@mi)}
                  /  { reset "{" eslist<[statement]>:ss "}" => reset(ss) }
                  /  { instance [moduleident]:nm "("
                            ecslist<[cvportbind],",">:ports ")" => instance(nm, ports) }
-                 /  { usemodule [string]:s => usemodule(s) }
+                 /  { include [qstring]:s => include(s) }
+                 /  { usemodule [qstring]:s => usemodule(s) }
                  /  { exec [cvargs]:a "{" eslist<[statement]>:ss "}"
                       [cvoprest]:rst => execop(a,ss,rst) }
                  ;
@@ -282,9 +286,13 @@ function hoist_inlined_verilog(out, mdl, argwires, argfun) {
      } else build_noreturn_wait('wait',iid,icrc);
   };
   add_netdef(d) = out('netdef'(d));
+  add_include(path) = {
+     out('include'(path, path));
+  };
   add_module(path) = {
      fullpath = path;
      dirpath = %_getpath(fullpath);
+     println('XXXX-INCLUDE'(dirpath, fullpath));
      out('include'(dirpath, fullpath));
      vmdl = parse_verilog_file(fullpath);
      visit:verilog0(verilog:vmdl) {
@@ -406,12 +414,16 @@ function hoist_inlined_verilog(out, mdl, argwires, argfun) {
       fn = visit:vlinline(itop: code) {
         deep itop {
            define -> {
-             add_netdef(mi);
+             iter m in mi do add_netdef(m);
              build(%__nop )
            }
          | reset -> { iter s in ss do out('reset'(s)); build(%__nop ) }
          | instance -> {
              add_instance(nm, ports);
+             build(%__nop )
+           }
+         | include -> {
+             add_include(path);
              build(%__nop )
            }
          | usemodule -> {

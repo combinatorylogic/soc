@@ -47,7 +47,7 @@ module c2soc(input sys_clk_in,
    wire [31:0]     ram_data_out_b;
    wire            ram_we_out;
 
- `include "socmodules.v"
+             `include "socmodules.v"
 
    cpu cpu1(.clk(clk),
             .rst(rst),
@@ -55,11 +55,11 @@ module c2soc(input sys_clk_in,
             .ram_data_in_a(ram_data_in_a),
             .ram_addr_in_a(ram_addr_in_a),
 
-            .ram_data_in_b(ram_data_in_b),
-            .ram_addr_in_b(ram_addr_in_b),
+            .xram_data_in_b(ram_data_in_b),
+            .xram_addr_in_b(ram_addr_in_b),
 
-            .ram_data_out_b(ram_data_out_b),
-            .ram_we_out(ram_we_out),
+            .xram_data_out_b(ram_data_out_b),
+            .xram_we_out(ram_we_out),
             /****************************/
             `include "soccpusignalsin.v"
             /****************************/
@@ -80,6 +80,10 @@ module c2soc(input sys_clk_in,
    
    socram ram1(.clk(clk),
                .rst(rst),
+
+               `ifdef CUSTOM_RAM_SIGNALS
+               `include "socramsignals.v"
+               `endif
 
                .data_a(ram_data_in_a),
                .addr_a(ram_addr_in_a),
@@ -104,10 +108,10 @@ module c2soc(input sys_clk_in,
                 .data_b_we(ram_we_out),
                 .FINISH(FINISH));
 
-   wire [31:0]     data_bus_in_cntr;
-   wire            data_bus_strobe_cntr;
 `endif
    
+   wire [31:0]     data_bus_in_cntr;
+   wire            data_bus_strobe_cntr;
    clockcounter cnt1
      (.clk(clk),
       .rst(rst),
@@ -131,7 +135,7 @@ module c2soc(input sys_clk_in,
                          data_bus_strobe_cntr?data_bus_in_cntr:
                          
                          `include "socdata.v"
-                         0;
+                         32'b0;
    
 endmodule
 
@@ -186,9 +190,9 @@ module clockcounter(input clk,
 
    always @(posedge clk)
      if (~rst) begin
-        counter <= 0;
+        counter <= 32'b0;
         strobe_b <= 0;
-        data_b <= 0;
+        data_b <= 32'b0;
      end else begin
         counter <= counter + 1;
         if (data_b_we & (addr_b == 65542))

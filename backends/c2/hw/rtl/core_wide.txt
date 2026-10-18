@@ -1,0 +1,223 @@
+/*
+ 
+ A general idea behind this template is not unlike how GPUs work - prioritising throughput vs. latency, in this case - to an extreme.
+ 
+ We have a number of execution units (e.g., for our baseline application, a number of SDF primitives), and the issue mechanism must keep them as busy as possible. 
+ A number of threads, likely divergent (and this is a significant difference from most of the GPUs) is spitting instuctions into the EUs one by one, and once an
+ instruction is retired, its thread added back into one of the reissue queues, along with a new PC value, thread ID and a couple of so called "immediate" registers
+ that are always carried along with their thread and do not reside in any of the multiple register files. They allow instructions from different EUs to 
+ communicate efficiently, reducing the number of RAM ports required.
+ 
+ EU register files can be additionally partitioned by thread ID, since threads do not need to communicate anyway. Otherwise, thread ID defines a register file window.
+ Since we have shit tons of threads (like, 256 would be a kind of a minimum viable for such an architecture), register files are unavoidably going to be big.
+ 
+ The "flow" baseline is provided by a cut down C2 core (maybe two? It's unlikely to be a critical bottleneck), while most of the custom EUs are HLS-generated.
+ 
+ We can have all kinds of EUs here, but the most efficient are simple pipelines. One thing missing yet is generating an external stall signal for such cores.
+ 
+ Possible bottlenecks: of course, any kind of a RAM access, pre-filling EU-specific memories, oversubscribing flow cores, etc. Need to investigate, and need to
+ have a very precise load measurement tool built in on all levels.
+ 
+ It would have been nice if we could keep RAMs partitioned too (with an extreme case being EU-specific RAMs, but it should be possible for EUs to share RAMs in 
+ between them, either via multiple ports or by forcing stalls).
+ 
+ */
+
+
+
+// A template for a wide multi-threaded core:
+//
+// QFETCH stage: N * reissue queue reads
+// IFETCH stage: N * IC reads from PCs coming from the QFETCH stage
+// DECODE stage: Decode instruction from IFETCH stage, identify its destination execution unit.
+// ISSUE stage: If execution unit ID is matching an available unit, issue the instruction and assert a next read command for this queue.
+
+// Unit control stage: M * execution unit entries, N issue entries. If an issue entry is empty, emit bubble into the execution unit, otherwise emit instruction, thread
+//  id, thread PC and its 2 32-bit immediate registers (if supported by the execution unit).
+
+// Then, arbitrarily deep execution unit pipelines, including specialised units and, of course, core units.
+
+// Core units are following:
+//  - Base C2 (including load/store, ALU and branching, but without any forwarding, also includes simple 1-cycle extended instructions) - serving the even thread ids
+//  - Second base C2 unit (serving the odd thread ids)
+//  - External RAM load/store unit
+//
+// All the other units are for extended instructions, both pipelined and multi-cycle
+//
+//  - At the end of any execution unit there is a new PC value, 2 immediate registers. Some (particularly long) execution units may not support immediate registers,
+//    which must be known statically at compilation time and handled accordingly (register transfer instructions issued).
+//
+// Large execution units must maintain their own register files (probably partitioned).
+
+module `WIDE_CORE_NAME (
+                        input                              clk,
+                        input                              rst,
+                        
+                        
+                        // ram / cache signals aggregated into vectors
+                        output [32*ISSUE_READ_WIDTH - 1:0] ic_read_addr,
+                        output [ISSUE_READ_WIDTH - 1:0]    ic_read_req,
+                        input [32*ISSUE_READ_WIDTH - 1:0]  ic_read_data,
+                        input [ISSUE_READ_WIDTH - 1:0]     ic_read_ack,
+
+                        output [32*RAM_PORTS - 1:0]        ram_read_addr,
+                        output [RAM_PORTS - 1:0]           ram_read_req,
+                        input [32*RAM_PORTS - 1:0]         ram_read_data,
+                        input [RAM_PORTS - 1:0]            ram_read_ack,
+
+                        output [32*RAM_WPORTS - 1:0]       ram_write_addr,
+                        output [RAM_WPORTS - 1:0]          ram_we,
+                        output [32*RAM_WPORTS - 1:0]       ram_write_data,
+                        input [RAM_WPORTS - 1:0]           ram_write_ready,
+
+                        input                              stall_cores);
+
+   parameter ISSUE_READ_WIDTH = 4;
+   parameter NUMBER_OF_UNITS = 4; // whatever
+   
+   parameter RAM_PORTS = 2;
+   parameter RAM_WPORTS = 2;
+
+   parameter THRIDWIDTH = 7;
+   parameter PCWIDTH = 16;
+   parameter NIMMEDREGS = 2;
+   parameter REGWIDTH = 32;
+
+   parameter INSNWIDTH = 32;
+
+   parameter R0WBWIDTH = 1;
+
+   parameter QDATAWIDTH = THRIDWIDTH + PCWIDTH + NIMMEDREGS * REGWIDTH + R0WBWIDTH;
+   parameter IFDATAWIDTH = THRIDWIDTH + PCWIDTH + INSNWIDTH + NIMMEDREGS * REGWIDTH + R0WBWIDTH;
+   
+
+   wire [QDATAWIDTH * ISSUE_READ_WIDTH - 1 : 0]            insndata;
+   wire [ISSUE_READ_WIDTH - 1:0]                           insnready;
+
+   wire [QDATAWIDTH * ISSUE_READ_WIDTH - 1 : 0]            queuedata;
+   wire [ISSUE_READ_WIDTH - 1:0]                           queuereq;
+   wire [ISSUE_READ_WIDTH - 1:0]                           queueready;
+
+   wire [QDATAWIDTH * NUMBER_OF_UNITS - 1 : 0]             queueindata;
+   wire [NUMBER_OF_UNITS - 1:0]                            queueinreq;
+   wire [NUMBER_OF_UNITS - 1:0]                            queueinready;
+
+   wire [IFDATAWIDTH * ISSUE_READ_WIDTH - 1 : 0]           if_insndata;
+   wire [ISSUE_READ_WIDTH - 1:0]                           if_insnready;
+
+   wire [NUMBER_OF_UNITS - 1:0]                            euready;
+   wire [NUMBER_OF_UNITS * IFDATAWIDTH - 1 : 0]            euissuedata;
+   wire [NUMBER_OF_UNITS - 1:0]                            eureq;
+
+   // Instruction queues have NUMBER_OF_UNITS input queues, re-routed into ISSUE_READ_WIDTH number of output queues.
+   //
+   // If there are N input queues ready and M output queues ready, with N > M, 
+   wide_core_iqueues (.OWIDTH(ISSUE_READ_WIDTH),
+                      .IWIDTH(NUMBER_OF_UNITS),
+                      .DATA_WIDTH(QDATAWIDTH)) queue1
+     (.clk(clk),
+      .rst(rst),
+      // Input
+      .queueinready(queueinready),
+      .queueindata(queueindata),
+      .queueinreq(queueinreq),
+   
+      // Output
+      .queueready(queueready),
+      .queuereq(queuereq),
+      .queuedata(queuedata));
+   
+   wide_core_qfetch (.WIDTH(ISSUE_READ_WIDTH)) qf1
+     (.clk(clk),
+      .rst(rst),
+
+      .queueready(queueready),
+      .queuereq(queuereq),
+      .queuedata(queuedata),
+
+      .insndata(insndata)
+      .insnready(insnready));
+
+   wide_core_ifetch (.WIDTH(ISSUE_READ_WIDTH)) if1
+     (.clk(clk),
+      .rst(rst),
+
+      // IC interface
+      .readaddrs(ic_read_addr),
+      .readreqs(ic_read_req),
+      .readacks(ic_read_ack),
+      .readdata(ic_read_data),
+
+      // Queue output
+      .insndata(insndata),
+      .insnready(insnready),
+
+      // Fetch output
+      .if_insndata(if_insndata),
+      .if_insnready(if_insnready),
+      );
+
+   wide_core_decode (.WIDTH(ISSUE_READ_WIDTH)) dc1
+     (.clk(clk),
+      .rst(rst),
+
+      // IF output
+      .if_insndata(if_insndata),
+      .if_insnready(if_insnready),
+
+      // Execution units interface
+      .euready(euready),
+      .euissuedata(euissuedata),
+      .eureq(eqreq)
+      );
+
+
+   `WIDE_CORE_EUNITS_INSTANCE execunits
+     (.clk(clk),
+      .rst(rst),
+
+      // DECODE output
+      .euready(euready),
+      .euissuedata(euissuedata),
+      .eureq(eqreq),
+
+      // Queue inputs
+      .queueinready(queueinready),
+      .queueindata(queueindata),
+      .queueinreq(queueinreq),
+
+      // External interfaces
+      .ram_read_addr(ram_read_addr),
+      .ram_read_req(ram_read_req),
+      .ram_read_data(ram_read_data),
+      .ram_read_ack(ram_read_ack),
+
+      .ram_write_addr(ram_write_addr),
+      .ram_we(ram_we),
+      .ram_write_data(ram_write_data),
+      .ram_write_ready(ram_write_ready),
+
+      // Need to lift whatever signals EUs want here
+      // ...
+
+      // Global stall signal
+      .stall_cores(stall_cores)
+      );
+
+endmodule
+
+
+/*
+ iqueues:
+ 
+   N input queues * M output queues, M < N
+
+   E.g., we have 8 in 4 out
+ 
+   A1,A2 = MIN2(I1,I2,I3,I4); A3,A4 = MIN2(I5,I6,I7,I8)
+   
+ 
+ 
+   
+   
+ */

@@ -7,7 +7,7 @@ SOURCES = ice.v 3rdparty.v ../rtl/core.v ../rtl/soctop.v ../rtl/regfile.v
 all: $(BITNAME).nextbin
 
 $(BITNAME).blif: blackice.pcf $(SOURCES)
-	yosys -p "synth_ice40 -top c2soc -blif $(BITNAME).blif"  -f "verilog -I$(INIT_FILE_PATH)_out $(EXTRA) -DICE=1 -DENABLE_EXT=1 -DENABLE_LONG_EXT=1 -DDISABLE_MICROOPS=1 -DINIT_FILE_PATH=$(INIT_FILE_PATH).hex"  $(SOURCES)
+	yosys -p "synth_ice40 -top c2soc -blif $(BITNAME).blif"  -f "verilog -I$(INIT_FILE_PATH)_out $(EXTRA) -DICE=1 -DENABLE_EXT=1 -DENABLE_LONG_EXT=1 -DDISABLE_MICROOPS=1 -DENABLE_SOUND=1 -DINIT_FILE_PATH=$(INIT_FILE_PATH).hex"  $(SOURCES)
 
 $(BITNAME).json: blackice.pcf $(SOURCES)
 	yosys -p "synth_ice40 -top c2soc -json $(BITNAME).json"  -f "verilog -I$(INIT_FILE_PATH)_out $(EXTRA) -DICE=1 -DENABLE_EXT=1 -DENABLE_LONG_EXT=1 -DDISABLE_MICROOPS=1 -DINIT_FILE_PATH=$(INIT_FILE_PATH).hex"  $(SOURCES)

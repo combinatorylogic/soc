@@ -14,6 +14,7 @@ function ll_to_hls_gettype(t)
       visit:ir2mem (irtype:t) {
          deep irtype {
             integer -> with target(hls0) mk:type:v(ll_get_itype_width(type, 'a'(node)))
+          | float -> with target(hls0) mk:type:v(32)
           | else -> ccerror('UNSUPPORTED_TYPE'(node))}}}
 
 \pfcode{

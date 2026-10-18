@@ -1,0 +1,11 @@
+`define FPGA 1
+`define CYCLONEV 1
+`define ENABLE_EXT 1
+`define ENABLE_LONG_EXT 1
+`define DISABLE_MICROOPS 1
+`define RAM_REGISTERED_OUT 1
+`define BIGMEM 1
+`define ENABLE_BARREL_SHIFTER 1
+`define DISABLE_MEMQUEUE 1
+// `define VGA4BIT
+// `define ENABLE_SOUND 1

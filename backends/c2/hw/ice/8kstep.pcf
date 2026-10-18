@@ -1,0 +1,36 @@
+set_io sys_clk_in J3
+set_io RX B10
+set_io TX B12
+set_io sys_reset R2
+
+
+
+set_io LED3 A2
+set_io LED7 B3
+set_io LED2 B4
+set_io LED4 A1
+set_io LED6 C4
+set_io LED8 C3
+set_io LED1 B5
+set_io LED5 C5
+
+set_io STEPPERX1[0] C16
+set_io STEPPERX1[1] B16
+set_io STEPPERX1[2] D16
+set_io STEPPERX1[3] D14
+
+set_io STEPPERX2[0] E16
+set_io STEPPERX2[1] D15
+set_io STEPPERX2[2] F16
+set_io STEPPERX2[3] E14
+
+set_io STEPPERX3[0] G16
+set_io STEPPERX3[1] F15
+set_io STEPPERX3[2] H16
+set_io STEPPERX3[3] G15
+
+set_io STEPPERX4[0] J15
+set_io STEPPERX4[1] H14
+set_io STEPPERX4[2] K14
+set_io STEPPERX4[3] J14
+

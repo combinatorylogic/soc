@@ -144,7 +144,7 @@ function ll_to_hls_extract_pipeline(aenv, top, bbs, ppname) {
                else node()}}}}
 
 \pfcode{
-function ll_to_hls_propagate_pipeline(aenv, top, ppname, bbs, endregs, threadregs) {
+function ll_to_hls_propagate_pipeline(aenv, top, ppname, bbs, endregs, threadregs, outregs) {
    // N.B.: bbs list is expected to be in a correct pipeline order
    bbsh = mkhash();
    bbsvh = mkhash();
@@ -171,9 +171,11 @@ function ll_to_hls_propagate_pipeline(aenv, top, ppname, bbs, endregs, threadreg
    regs = getregs();
    regsh = mkhash();
 
-   iter [nm;bb;tp] in regs :: threadregs do {
-      ohashput(regtypes, nm, tp);
-      ohashput(regsh, nm, bb)};
+   iter [nm;bb;tp] in regs :: threadregs do
+     if(not(memq(nm, outregs))) {
+        println('ADDREG'(nm, tp));
+        ohashput(regtypes, nm, tp);
+        ohashput(regsh, nm, bb)};
 
    // 2. Starting with the given list of registers (i.e., the output and / or some phis),
    //    going backwards from the last pipeline stage, mark each stage with registers that are used
@@ -250,6 +252,13 @@ function ll_to_hls_propagate_pipeline(aenv, top, ppname, bbs, endregs, threadreg
            bbregsprev = if (prvn) ohashget(bbregrewrites, prvn) else [];
            bbregsht = mkhash();
            iter [nm;prev;next;tp] in bbregsprev do ohashput(bbregsht, nm, [nm;prev;next;tp]);
+           // A register defined in the previous stage and used here is read from that stage's
+           // renamed register; the pass-through list above only carries older definitions.
+           if (prvn) {
+             <puses:pdefs> = getbbregs(ohashget(bbsvh, prvn));
+              iter d in pdefs do
+                 if (not(ohashget(bbregsht, d)))
+                    ohashput(bbregsht, d, [d; %Sm<<(prvn, "_", d); %Sm<<(prvn, "_", d); ohashget(regtypes, d)])};
            rewritebb(node(), name, bbregs, bbregsht)
       } else node()}};
    return endregsh:final()
@@ -311,7 +320,7 @@ function ll_to_hls_simple_pipeline(aenv, top, entrybb, stepid, step) {
    ntop1 = ll_to_hls_extract_pipeline(aenv, ntop, bbs, ppname);
    tp0 = with target (hls0) {mk:type:v(32)};//TODO!!!
   <eregs:ntop2> = ll_to_hls_propagate_pipeline(aenv, ntop1, ppname, bbs,
-                                               map [nm;tp] in outregs do nm, [[idname;'*args*';tp0]]);
+                                               map [nm;tp] in outregs do nm, [[idname;'*args*';tp0]], []);
 
    //4. Generate an enqueue FSM around this pipeline.
 
@@ -347,7 +356,7 @@ function ll_to_hls_simple_pipeline(aenv, top, entrybb, stepid, step) {
 
 
 \pfcode{
-function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
+function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops, onecyclep, count) {
    //1. Start with the entry basic block of a pipeline, follow down to a back edge or an exit,
    //   and  mark the pipeline basic blocks in sequence.
 
@@ -367,10 +376,18 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
    //    -  Thread ID register referenced anywhere in an entry basic block
    //
    //   Loop analysis information is outdated by this moment, so we'll only use it to get en exit edge.
+   // The pragma's block is the loop's pre-header: entryedge(L, entrybb, header) names the loop.
+   loopids = map append l in (cadr(loops)) do
+                match l with 'entryedge'(L, F, T) -> if (F === entrybb) [[L;T]] else [] | else -> [];
+   if (not(loopids)) ccerror('PIPELINE-NO-LOOP-AFTER-PRAGMA'(entrybb));
+  <[loopid;lentry0]> = car(loopids);
   <[lentry;lexit]> = car(map append l in (cadr(loops)) do
                     match l with
-                       'exitedge'('L1',F,T) -> [[F;T]]
+                       'exitedge'(L,F,T) -> if (L === loopid) [[F;T]] else []
                      | else -> []);
+   // A pragma somewhere other than the function entry (a branch of an if-tree, several kernels in
+   // one function): the entry FSM stays and dispatches to this pipeline's enqueue FSM.
+   dispatchp = not(entrybb === 'entry');
 
    //2. Introduce an explicit step register. Detect the exit and re-entry registers (inner loop phi nodes)
    idname = gensym();
@@ -379,10 +396,25 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
          deep value {
             reg -> if (id === stepid) mk:node(id = idname) else node()
           | else -> node()}};
+   // Only this loop's blocks see the thread id register: another kernel in the same function may
+   // use the same argument as its own thread id.
+   bbsh0 = mkhash();
+   visit:hls0 /rec/ (top: top0) { once bblock { bb -> ohashput(bbsh0, name, node()) }};
+   getnext0(bb) =
+      visit:hls0 /rec/ (bblock: bb) {
+         deep bblock { bb -> next };
+         deep exit { br -> [dst] | brc -> [tr;fl] | else -> [] }};
+   loopbbs = mkhash();
+   do walk0(b = lentry) {
+      if (not(ohashget(loopbbs, b)) && not(b === lexit)) {
+         ohashput(loopbbs, b, b);
+         iter s in getnext0(ohashget(bbsh0, b)) do walk0(s)}};
+   ohashput(loopbbs, entrybb, entrybb);
+   ohashput(loopbbs, lexit, lexit);
    rewriteit() =
       visit:hls0 /rec/ (top: top0) {
          deep bblock {
-            bb -> rewritebb(node())}};
+            bb -> if (ohashget(loopbbs, name)) rewritebb(node()) else node()}};
             
    top = rewriteit(); ntop = top;
 
@@ -454,11 +486,13 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
 
    //3. Apply the pipeline extraction and pipeline register propagation passes.
    ppname = %Sm<<(idname, "_pipe");
+   ohashput(^ll_hls_pipe_ii_of, ppname, aif(chk = ohashget(^ll_hls_body_ii, lbody)) chk else 1);
+   if (dispatchp) ohashput(^ll_hls_dispatched, ppname, ppname);
    ntop1 = ll_to_hls_extract_pipeline(aenv, ntop, bbs, ppname);
    tp0 = with target (hls0) {mk:type:v(32)};//TODO!!!
   <eregs:ntop2> = ll_to_hls_propagate_pipeline(aenv, ntop1, ppname, bbs,
                                                rexits,
-                                               rentries :: [[idname;'*args*';tp0]]);
+                                               rentries :: [[idname;'*args*';tp0]], []);
 
    //4. Generate an enqueue FSM around this pipeline.
 
@@ -479,10 +513,11 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
       //        incrementing the thread ID by a given step. Otherwise issue a bubble.
       //        If reissued thread count is 0, set ACK to 1 and go to IDLE, otherwise repeat REISSUE.
 
-      getinitarg(args) =
+      getinitarg(args) = {
+         println('GETINITARG-POO'(args));
          car(map append [lbl;tp;v] in args do
               if (lbl === entrybb)
-                 match tp with 'reg' -> [mk:value:reg(v)] | else -> [v]);
+                 match tp with 'reg' -> [mk:value:reg(v)] | else -> [v])};
                  
       getstepval(args) =
          car(map append [lbl;tp;v] in args do
@@ -526,6 +561,7 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
             get()};
       
       rregs = map [reg;itp;otp;args] in ephis do {
+         println('RREGS'(reg, itp, otp, args));
          mk:reissuereg:r(nm=reg, tp = otp, init=getinitarg(args), step = getstepval(args))
       };
 
@@ -535,7 +571,7 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
 
       enq = mk:bblock:bb(
              tp = mk:enqueue_loop(
-                    id = 'default',
+                    id = if (dispatchp) ppname else 'default',
                     pipeline = ppname,
                     depth = length(bbs),
                     thrid = mk:reg(idname),
@@ -549,7 +585,9 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
                     rregs = rregs,
                     stepinstrs = stepinstrs,
                     exitcnd = exitcnd,
-                    final = final
+                    final = final,
+                    onecyclep = onecyclep,
+                    count = count
                     ),
              name = 'entry',
              bs = [],
@@ -559,6 +597,28 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
       //println('-------------------*1');
       //println(pprnt(enq));
       //println('-------------------*2');
+      if (dispatchp) {
+         // The entry FSM keeps its shape: the pragma's block raises this pipeline's request
+         // register and a wait block spins on the acknowledge register, then the exit block
+         // (stripped of its output assignments, which the enqueue FSM performs) returns.
+         reqname = %Sm<<(ppname, "_req"); ackname = %Sm<<(ppname, "_ack");
+         waitname = %Sm<<(ppname, "_wait");
+         bit = mk:type:v(1);
+         setreq(v) = mk:instr:i(mk:reg(), reqname, bit, mk:iop:v(mk:const(v, bit)));
+         waitbb = mk:bblock:bb(tp = mk:fsm('default'), name = waitname,
+                               bs = [mk:parblock:pb(name = %Sm<<(waitname, "_pb"), ss = [setreq(0)], pars = [])],
+                               next = mk:exit:brc(mk:reg(ackname), lexit, waitname));
+         visit:hls0 /rec/ (top: ntop2) {
+            deep bblock {
+               bb -> if (name === lentry) []
+                     else if (name === entrybb)
+                        [mk:node(bs = bs :: [mk:parblock:pb(name = %Sm<<(entrybb, "_req_pb"), ss = [setreq(1)], pars = [])],
+                                 next = mk:exit:br(waitname))]
+                     else if (name === lexit) [mk:node(bs = [])]
+                     else [node()]};
+            deep top {
+               module -> mk:node(body = enq : waitbb : map append b in body do b)}}
+      } else
       visit:hls0 /rec/ (top: ntop2) {
          deep bblock {
             bb -> tp(thisnodesrc())};
@@ -569,5 +629,60 @@ function ll_to_hls_loop_pipeline(aenv, top0, entrybb, stepid, step, loops) {
             module -> mk:node(body = enq : map append b in body do b)}}}}}
 
 
+
+\pfcode{
+function ll_to_hls_bare_pipeline(aenv, top0, entrybb) {
+   bbsh = mkhash();
+   cachebbs() =
+     visit:hls0 /rec/ (top: top0) {
+         once bblock { bb -> ohashput(bbsh, name, node()) }};
+   cachebbs();
+
+   getnext(bb) =
+      visit:hls0 /rec/ (bblock: bb) {
+         deep bblock { bb -> next };
+         deep exit {
+            br -> dst
+          | else -> []}};
+
+   getbbslist() =
+      collector(addbb, getbbs) {
+        do loop(bb = entrybb) {
+           addbb(bb);
+           nxt = getnext(ohashget(bbsh, bb));
+           if (nxt) loop(nxt)};
+        getbbs()};
+   bbs = getbbslist();
+
+   idname = gensym();
+   ppname = %Sm<<(idname, "_pipe");
+   // TODO: copy volatile arguments as registers
+   getoutputs() = collector(add, get) {
+      visit:hls0 /rec/ (top: top0) {
+         once modarg {
+            aoutreg -> add([nm;tp]) | else -> []}};
+      return get()};
+   outregs = getoutputs();
+
+   getmodname() = visit:hls0 /rec/ (top:top0) {
+      once top { module -> {
+                   ll_hls_md_register_args(nm, args);
+                   return nm }}};
+   modname = getmodname();
+
+   ll_hls_md_register_depth(modname, length(bbs));
+
+   ntop1 = ll_to_hls_extract_pipeline(aenv, top0, bbs, ppname);
+  <eregs:ntop2> = ll_to_hls_propagate_pipeline(aenv, ntop1, ppname, bbs,
+                                               [],
+                                               [],
+                                               map [nm;tp] in outregs do nm
+                                               );
+   println('BARE-EREGS'(@eregs));
+   pprnt = gen_pprint_ast(hls0, top);
+   println(pprnt(ntop2));
+   println('--------------------999');
+   return ntop2
+}}
 
 %%%%%%%%%%

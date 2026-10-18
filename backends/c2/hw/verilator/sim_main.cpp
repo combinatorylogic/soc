@@ -4,6 +4,7 @@
 #include <thread>
 #include <verilated.h>
 #include "Vc2soc.h"
+#include "Vc2soc___024root.h"
 
 #include <ncurses.h>
 
@@ -18,7 +19,7 @@ typedef unsigned short ushort;
 typedef unsigned int uint;
 
 
-unsigned char *vgamem;
+VlUnpacked<CData, 153600> *vgamem;
 int vgacounter;
 
 void dumpmem()
@@ -31,7 +32,7 @@ void dumpmem()
         fprintf(f, "P2\n640 480 32\n");
         for (int i = 0; i < 480; i++) {
                 for (int j = 0; j < 640/2; j++) {
-                        unsigned char c = vgamem[j + i*(640/2)];
+                  unsigned char c = (*vgamem)[j + i*(640/2)];
                         fprintf(f, "%d %d ", (c>>4)&0xf, c&0xf);
                 }
                 fprintf(f, "\n");
@@ -52,7 +53,7 @@ int main(int argc, char **argv, char **env) {
         if (argc!=2) return -1;
         fsrc = fopen(argv[1], "r");
         size = 8192;
-        buf = (uint *)malloc(2 * size + 2);
+        buf = (uint *)malloc(2 * sizeof(uint) * size + 2);
         for (n = 0; n < size; n++) {
                 uint tmp;
                 if (fscanf(fsrc, "%x\n", &tmp) == EOF) break;
@@ -67,12 +68,11 @@ int main(int argc, char **argv, char **env) {
 	
 	top->sys_clk_in = 0;	 	        // Clock
 	top->sys_reset = 0;                  // reset button pressed
-
-        vgamem = top->c2soc__DOT__vga1__DOT__vram1__DOT__mem;
+        vgamem = &(top->rootp->c2soc__DOT__vga1__DOT__vram1__DOT__mem);
         
 	for (n = 0; n < size; n++) {
-		top->c2soc__DOT__ram1__DOT__mem[n] = buf[n];
-	}
+		top->rootp->c2soc__DOT__ram1__DOT__mem[n] = buf[n];
+                }
 	
 	// Warm up in reset
 	while(sys_clock < 100) {

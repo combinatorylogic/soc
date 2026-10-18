@@ -12,7 +12,7 @@ set_property -dict [list \
                         CONFIG.CLKOUT1_JITTER {114.829} \
                         CONFIG.CLKOUT1_PHASE_ERROR {98.575} \
                         CONFIG.CLKOUT2_DRIVES {BUFG} \
-                        CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {100.000} \
+                        CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {50.000} \
                         CONFIG.CLKOUT2_USED {1} \
                         CONFIG.CLKOUT3_DRIVES {BUFG} \
                         CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {25.000} \

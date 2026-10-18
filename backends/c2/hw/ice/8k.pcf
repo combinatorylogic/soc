@@ -1,7 +1,7 @@
 set_io sys_clk_in J3
 set_io RX B10
 set_io TX B12
-set_io sys_reset H16
+set_io sys_reset R2
 
 
 
@@ -13,4 +13,3 @@ set_io LED6 C4
 set_io LED8 C3
 set_io LED1 B5
 set_io LED5 C5
-

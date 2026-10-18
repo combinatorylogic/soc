@@ -29,7 +29,7 @@ function printeqs_clpfd(c)
       | entry -> %S<<("  ",a,"  #=  0")}}}
 
 \pfcode{
-function pprint_clpfd(c) {
+function pprint_clpfd(c, pipelined) {
    getvars(c) = {
       ht = mkhash();
       visit:clpfd0 /rec/ (code: c) {
@@ -38,22 +38,31 @@ function pprint_clpfd(c) {
    vars = getvars(c);
    svars = map v in vars do %S<<(v);
    svarslist = strinterleave(svars, ", ");
+   // Accesses to one memory are strictly ordered, so a block with N operations may need up to
+   // about N stages; a fixed 0..100 domain made the goal fail for long straight-line blocks.
+   bound = 100 + 2 * length(vars);
    inner = %S<<(
       "generate(Vars) :- \n",
       "   Vars = [", svarslist, "], \n",
-      "   [", svarslist, "] ins 0..100,\n",
+      "   [", svarslist, "] ins 0..", bound, ",\n",
       printeqs_clpfd(c),
       ",labeling([",
          strinterleave(map v in vars do %S<<("min(",v,")"), ","),
       "], [", svarslist, "]).\n");
 
-   outer = ":- use_module(library(clpfd)).
+   // A pipeline stage lasts exactly one step and a RAM's output or an operator's result is only
+   // present for that step, so commits must land exactly where the latency says; an FSM may wait.
+   afterrule = if (pipelined) {
+      "after(A, B, N) :- A #= B + N.
+"} else {
+      "after(A, B, N) :- A #>= B + N.
+"};
+   outer = %S<<(":- use_module(library(clpfd)).
 
-after(A, B, N) :- A #>= B + N.
-depends(A, B) :- A #>= B.
+", afterrule, "depends(A, B) :- A #>= B.
 ordered(A, B) :- A #> B.
 exclusive(A, B) :- dif(A, B).
-";
+");
    footer = "?- generate(Vars), print(Vars), halt(0).";
 
    return vars:%S<<(outer, inner, footer)
@@ -65,16 +74,31 @@ parser clpfdout (pfront) {
    clpfdout := "[" ecslist<[number],",">:es "]" [Spaces]* => es;}}
 
 \pfcode{
-function run_clpfd(c0)
+#(define hls_sched_pid
+   (let* ((tproc (sdotnet "System.Diagnostics.Process"))
+          (curproc (fun () ((r_sbind tproc "GetCurrentProcess")))))
+     (fun () ((r_bind tproc "get_Id") (curproc)))))
+}
+
+\pfcode{
+function run_clpfd(c0, pipelined)
 if(c0) {
     tmp(s) = %ast2:from-listform(clpfd0, code, s);
     c = tmp('c'(@c0));
-   <vars:code> = pprint_clpfd(c);
-    %call-with-output-file("tmpfile.pl", fun(f) fprintln(f, code));
-    // TODO
+   <vars:code> = pprint_clpfd(c, pipelined);
+    // One file per compiler process: concurrent compiles in one directory used to read each
+    // other's schedules through a shared tmpfile.pl, which silently produced wrong FSMs.
+    fname = %S<<("hls_sched_", hls_sched_pid(), ".pl");
+    %call-with-output-file(fname, fun(f) fprintln(f, code));
     collector(add, get) {
-       system("swipl", "-s tmpfile.pl", add);
+       system("swipl", %S<<("-s ", fname), add);
+       system("rm", %S<<("-f ", fname), fun(x) []);
        l = car(lasttail(get()));
-       return zip(vars, parse l as clpfdout)}}}
+       res = parse l as clpfdout;
+       // A failed goal leaves a warning as the last line, which used to be zipped with the
+       // variables and surface much later as a cast error in the stage arithmetic.
+       if ((length(res) < length(vars)) || (length(res) > length(vars)))
+          ccerror('HLS-SCHEDULE-FAILED'(%S<<("swipl output: ", l)));
+       return zip(vars, res)}}}
 
 %%%

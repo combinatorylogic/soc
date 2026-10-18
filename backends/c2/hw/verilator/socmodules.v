@@ -3,9 +3,6 @@
    assign clk = sys_clk_in;
    assign rst = sys_reset;
 
-
-   wire [7:0]           LED;
-
    ledwriter ledwr1 (.clk(clk),
                      .rst(rst),
                      

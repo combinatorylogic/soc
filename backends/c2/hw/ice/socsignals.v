@@ -21,3 +21,10 @@
                  output PCdebug7,
                  output PCdebug8,
 `endif                      
+
+`ifdef ICE_STEPPERS
+                 output [3:0] STEPPERX1,
+                 output [3:0] STEPPERX2,
+                 output [3:0] STEPPERX3,
+                 output [3:0] STEPPERX4,
+`endif                       
